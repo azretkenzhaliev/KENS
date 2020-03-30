@@ -28,8 +28,18 @@ private:
 
 private:
 	virtual void timerCallback(void* payload) final;
+
+	// fds is a hash table for the active file descriptors.
 	std::unordered_set<int> fds;
+
+	// sockfdToAddrInfo is a hash table, which contains
+	// (socket descriptor, (port/ip info, length of info in bytes)).
+	// It is the main data structure used for the effective
+	// socket descriptor <-> port/ip translation.
 	std::unordered_map<int, std::pair<struct sockaddr, socklen_t>> sockfdToAddrInfo;
+
+	// binded is a hash table, which stores the active port/ip bindings.
+	// It is the main data structure used for binding collision checking.
 	std::unordered_set<std::pair<uint16_t, uint32_t>> binded;
 public:
 	TCPAssignment(Host* host);
