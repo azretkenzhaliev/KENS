@@ -13,6 +13,9 @@
 #include <E/Networking/E_Packet.hpp>
 #include <E/Networking/E_NetworkUtil.hpp>
 #include "TCPAssignment.hpp"
+#include <random>
+#include <chrono>
+
 
 namespace E
 {
@@ -48,6 +51,10 @@ void TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int type, int prot
 	if (fd != -1) {
 		// If the file descriptor was successfully created make a note of that.
 		fds.insert(fd);
+		Azocket azocket;
+		azocket.sockfd = fd;
+		azocket.state = sockstate::STATE_CLOSED;
+		sockfdToAzocket[fd] = azocket;
 	}
 
 	// Return -1 or the created file descriptor.
@@ -80,19 +87,12 @@ void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int sockfd) {
 
 	// Remove the socket descriptor from the set (hash table) of active socket descriptors.
 	fds.erase(sockfd);
+	sockfdToAzocket.erase(sockfd);
 	this->removeFileDescriptor(pid, sockfd);
 	this->returnSystemCall(syscallUUID, 0);
 }
 
-void TCPAssignment::syscall_bind(
-	UUID syscallUUID, int pid, int sockfd,
-	struct sockaddr *addr, socklen_t addrlen) {
-	// If the socket descriptor does not exist or was already binded, return -1.
-	if (!fds.count(sockfd) || sockfdToAddrInfo.count(sockfd)) {
-		this->returnSystemCall(syscallUUID, -1);
-		return;
-	}
-
+int TCPAssignment::bind(int sockfd, struct sockaddr *addr, socklen_t addrlen){
 	// We decided to copy the given data (binding), so that
 	// in case if the data in the given pointer is ever
 	// freed without a notice, we'll be safe.
@@ -105,8 +105,7 @@ void TCPAssignment::syscall_bind(
 	// (port, 0.0.0.0) or (port, ip) pairs, it means that current
 	// binding is not allowed to happen, so return -1.
 	if (binded.find({port, 0}) != binded.end() || binded.find({port, ip}) != binded.end()) {
-		this->returnSystemCall(syscallUUID, -1);
-		return;
+		return -1;
 	}
 
 	// If the checks passed, add (socket descriptor, binding) pair into the hash table
@@ -114,7 +113,21 @@ void TCPAssignment::syscall_bind(
 	sockfdToAddrInfo[sockfd] = {copied_addr, addrlen};
 	binded.insert({port, ip});
 
-	this->returnSystemCall(syscallUUID, 0);
+	sockfdToAzocket[sockfd].source_ip = ip;
+	sockfdToAzocket[sockfd].source_port = port;
+	return 0;
+}
+
+void TCPAssignment::syscall_bind(
+	UUID syscallUUID, int pid, int sockfd,
+	struct sockaddr *addr, socklen_t addrlen) {
+	// If the socket descriptor does not exist or was already binded, return -1.
+	if (!fds.count(sockfd) || sockfdToAddrInfo.count(sockfd)) {
+		this->returnSystemCall(syscallUUID, -1);
+		return;
+	}
+
+	this->returnSystemCall(syscallUUID, bind(sockfd, addr, addrlen));
 }
 
 void TCPAssignment::syscall_getsockname(
@@ -134,6 +147,46 @@ void TCPAssignment::syscall_getsockname(
 	this->returnSystemCall(syscallUUID, 0);
 }
 
+void TCPAssignment::implicit_bind(int sockfd, uint32_t dest_ip) {
+	std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
+	int port = std::uniform_int_distribution<int>(1025, 65535)(rng);
+	
+	uint8_t *local_ip;
+	int index = this->getHost()->getRoutingTable((uint8_t *)dest_ip);
+	this->getHost()->getIPAddr(local_ip, index);
+
+	struct sockaddr_in buf;
+	buf.sin_family = AF_INET;
+	buf.sin_addr.s_addr = (in_addr_t) *local_ip;
+	buf.sin_port = port;
+	
+	struct sockaddr *local_addr = (struct sockaddr *) &buf;
+	socklen_t local_addrlen = sizeof(*local_addr);
+
+	while (bind(sockfd, local_addr, local_addrlen) != 0){
+		port = std::uniform_int_distribution<int>(1025, 65535)(rng);
+		buf.sin_port = port;
+	}
+}
+
+void TCPAssignment::syscall_connect(
+	UUID syscallUUID,  int pid, int sockfd,
+	struct sockaddr *addr, socklen_t addrlen) {
+	uint32_t dest_ip = ((struct sockaddr_in*) &addr)->sin_addr.s_addr;
+	uint8_t dest_port = ((struct sockaddr_in*) &addr)->sin_port;
+	implicit_bind(sockfd, dest_ip);
+
+	sockfdToAzocket[sockfd].dest_ip = dest_ip;
+	sockfdToAzocket[sockfd].dest_port = dest_port;
+
+	sockfdToAzocket[sockfd].sendSYNPacket(this); // sockfd, dest ip, ...
+
+	sockfdToAzocket[sockfd].syscall_id = syscallUUID;
+	sockfdToAzocket[sockfd].state = sockstate::STATE_SYNSENT;
+}
+
+
+
 void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param)
 {
 	switch(param.syscallNumber)
@@ -151,8 +204,8 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 		//this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
 		break;
 	case CONNECT:
-		//this->syscall_connect(syscallUUID, pid, param.param1_int,
-		//		static_cast<struct sockaddr*>(param.param2_ptr), (socklen_t)param.param3_int);
+		// this->syscall_connect(syscallUUID, pid, param.param1_int,
+		// 		static_cast<struct sockaddr*>(param.param2_ptr), (socklen_t)param.param3_int);
 		break;
 	case LISTEN:
 		//this->syscall_listen(syscallUUID, pid, param.param1_int, param.param2_int);
@@ -184,7 +237,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 {
-
+	
 }
 
 void TCPAssignment::timerCallback(void* payload)
