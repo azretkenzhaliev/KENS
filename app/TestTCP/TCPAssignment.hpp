@@ -49,10 +49,10 @@ protected:
 	// It is the main data structure used for binding collision checking.
 	std::unordered_set<std::pair<uint16_t, uint32_t>> binded;
 		
-	enum AzocketState { 
+	enum AzocketState : uint8_t {
 		STATE_CLOSED,
-		STATE_LISTEN, 
-		STATE_SYNSENT, 
+		STATE_LISTEN,
+		STATE_SYNSENT,
 		STATE_SYN_RCVD,
 		STATE_ESTAB
 	};
@@ -104,7 +104,7 @@ protected:
 	// map: SipDip -> sockfd
 	std::map<struct SipDip, int> SipDipToSockfd;
 
-	enum PacketFlag {
+	enum PacketFlag : uint8_t {
 		FLAG_FIN,
 		FLAG_SYN,
 		FLAG_RST,
@@ -115,7 +115,7 @@ protected:
 		FLAG_CWR
 	};
 
-	enum PacketType {
+	enum PacketType : uint8_t {
 		FIN = (1 << PacketFlag::FLAG_FIN),
 		SYN = (1 << PacketFlag::FLAG_SYN),
 		SYNACK = (1 << PacketFlag::FLAG_SYN) | (1 << PacketFlag::FLAG_ACK),
