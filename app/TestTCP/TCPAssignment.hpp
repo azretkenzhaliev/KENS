@@ -106,7 +106,7 @@ protected:
 	// map: SipDip -> sockfd
 	std::map<struct SipDip, int> SipDipToSockfd;
 
-	typedef enum {
+	enum PacketFlag {
 		FLAG_FIN,
 		FLAG_SYN,
 		FLAG_RST,
@@ -115,14 +115,14 @@ protected:
 		FLAG_URG,
 		FLAG_ECE,
 		FLAG_CWR
-	} packetFlags;
+	};
 
-	typedef enum {
-		FIN = (1 << packetFlags::FLAG_FIN),
-		SYN = (1 << packetFlags::FLAG_SYN),
-		SYNACK = (1 << packetFlags::FLAG_SYN) | (1 << packetFlags::FLAG_ACK),
-		ACK = (1 << packetFlags::FLAG_ACK)
-	} packetTypes;
+	enum PacketType {
+		FIN = (1 << PacketFlag::FLAG_FIN),
+		SYN = (1 << PacketFlag::FLAG_SYN),
+		SYNACK = (1 << PacketFlag::FLAG_SYN) | (1 << PacketFlag::FLAG_ACK),
+		ACK = (1 << PacketFlag::FLAG_ACK)
+	};
 
 	virtual int _syscall_socket(UUID syscallUUID, int pid, int type, int protocol) final;
 	virtual void syscall_socket(UUID syscallUUID, int pid, int type, int protocol) final;
@@ -137,11 +137,11 @@ protected:
 
 	virtual void implicit_bind(int sockfd, uint32_t dest_ip) final;
 	virtual uint8_t getFlags(Packet *packet) final;
-	virtual Packet* makePacket(struct Azocket &azocket, const uint8_t flag) final;
+	virtual Packet* makePacket(struct Azocket &azocket, PacketType type) final;
 	virtual void sendSYNPacket(struct Azocket &azocket) final;	
 	virtual void sendSYNACKPacket(struct Azocket &azocket) final;
 	virtual void sendACKPacket(struct Azocket &azocket) final;
-	virtual SipDip getSipDip(uint32_t source_ip,uint16_t source_port, uint32_t dest_ip,uint16_t dest_port) final;
+	virtual SipDip getSipDip(uint32_t source_ip, uint16_t source_port, uint32_t dest_ip, uint16_t dest_port) final;
 };
 
 class TCPAssignmentProvider

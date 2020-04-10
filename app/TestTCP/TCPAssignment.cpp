@@ -232,7 +232,7 @@ void TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd,
 	this->returnSystemCall(syscallUUID, 0);
 }
 
-Packet* TCPAssignment::makePacket(struct Azocket &azocket, const uint8_t flag) {
+Packet* TCPAssignment::makePacket(struct Azocket &azocket, PacketType type) {
 	// 14 - Ethernet header
 	// 20 - IP header structure
 
@@ -261,7 +261,8 @@ Packet* TCPAssignment::makePacket(struct Azocket &azocket, const uint8_t flag) {
 	uint8_t data_offset = 5 << 4;
 	packet->writeData(14 + 20 + 12, &data_offset, 1);
 
-	packet->writeData(14 + 20 + 13, &flag, 1);
+	uint8_t flags = type;
+	packet->writeData(14 + 20 + 13, &flags, 1);
 
 	uint16_t window_size = htons(51200);
 	packet->writeData(14 + 20 + 14, &window_size, 2);
@@ -277,17 +278,17 @@ Packet* TCPAssignment::makePacket(struct Azocket &azocket, const uint8_t flag) {
 }
 
 void TCPAssignment::sendSYNPacket(struct Azocket &azocket) {
-	Packet *packet = makePacket(azocket, packetTypes::SYN);
+	Packet *packet = makePacket(azocket, PacketType::SYN);
 	this->sendPacket("IPv4", packet);
 }
 
 void TCPAssignment::sendSYNACKPacket(struct Azocket &azocket) {
-	Packet *packet = makePacket(azocket, packetTypes::SYNACK);
+	Packet *packet = makePacket(azocket, PacketType::SYNACK);
 	this->sendPacket("IPv4", packet);
 }
 
 void TCPAssignment::sendACKPacket(struct Azocket &azocket) {
-	Packet *packet = makePacket(azocket, packetTypes::ACK);
+	Packet *packet = makePacket(azocket, PacketType::ACK);
 	this->sendPacket("IPv4", packet);
 }
 
@@ -376,10 +377,10 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 	SipDip sipdip;
 
 	switch ((uint16_t) flags) {
-		case packetTypes::FIN: {
+		case PacketType::FIN: {
 			break;
 		}
-		case packetTypes::SYN: { // server accepts connection
+		case PacketType::SYN: { // server accepts connection
 			sockfd = IPPortToSockfd[{dest_ip, dest_port}];
 			int new_sockfd = _syscall_socket(sockfdToAzocket[sockfd].syscall_id, sockfdToAzocket[sockfd].pid, 0, 0);
 
@@ -396,7 +397,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			sockfdToAzocket[new_sockfd].state = sockstate::STATE_SYN_RCVD;
 			break;
 		}
-		case packetTypes::SYNACK: { // client established connection
+		case PacketType::SYNACK: { // client established connection
 			sipdip = getSipDip(source_ip, source_port, dest_ip, dest_port);
 			sockfd = SipDipToSockfd[sipdip];
 			
@@ -407,7 +408,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			this->returnSystemCall(sockfdToAzocket[sockfd].syscall_id, 0);
 			break;
 		}
-		case packetTypes::ACK: {
+		case PacketType::ACK: {
 			sipdip = getSipDip(source_ip, source_port, dest_ip, dest_port);
 			sockfd = SipDipToSockfd[sipdip];
 			sockfdToAzocket[sockfd].state = sockstate::STATE_ESTAB;
