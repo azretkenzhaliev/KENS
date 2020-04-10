@@ -55,7 +55,7 @@ int TCPAssignment::_syscall_socket(UUID syscallUUID, int pid, int type, int prot
 		azocket.pid = pid;
 		azocket.sockfd = fd;
 		azocket.syscall_id = syscallUUID;
-		azocket.state = sockstate::STATE_CLOSED;
+		azocket.state = STATE_CLOSED;
 
 		std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
 		azocket.seq_num = htonl(std::uniform_int_distribution<uint32_t>(0, UINT32_MAX)(rng));
@@ -215,7 +215,7 @@ void TCPAssignment::syscall_connect(
 	sendSYNPacket(sockfdToAzocket[sockfd]);
 
 	sockfdToAzocket[sockfd].syscall_id = syscallUUID;
-	sockfdToAzocket[sockfd].state = sockstate::STATE_SYNSENT;
+	sockfdToAzocket[sockfd].state = STATE_SYNSENT;
 }
 
 void TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd, 
@@ -394,7 +394,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			
 			sendSYNACKPacket(sockfdToAzocket[new_sockfd]);
 
-			sockfdToAzocket[new_sockfd].state = sockstate::STATE_SYN_RCVD;
+			sockfdToAzocket[new_sockfd].state = STATE_SYN_RCVD;
 			break;
 		}
 		case PacketType::SYNACK: { // client established connection
@@ -404,14 +404,14 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			sockfdToAzocket[sockfd].ack_num = seq_num + 1;
 			sendACKPacket(sockfdToAzocket[sockfd]);
 
-			sockfdToAzocket[sockfd].state = sockstate::STATE_ESTAB;
+			sockfdToAzocket[sockfd].state = STATE_ESTAB;
 			this->returnSystemCall(sockfdToAzocket[sockfd].syscall_id, 0);
 			break;
 		}
 		case PacketType::ACK: {
 			sipdip = getSipDip(source_ip, source_port, dest_ip, dest_port);
 			sockfd = SipDipToSockfd[sipdip];
-			sockfdToAzocket[sockfd].state = sockstate::STATE_ESTAB;
+			sockfdToAzocket[sockfd].state = STATE_ESTAB;
 			break;
 		}
 	}

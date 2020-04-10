@@ -49,13 +49,13 @@ protected:
 	// It is the main data structure used for binding collision checking.
 	std::unordered_set<std::pair<uint16_t, uint32_t>> binded;
 		
-	typedef enum { 
+	enum AzocketState { 
 		STATE_CLOSED,
 		STATE_LISTEN, 
 		STATE_SYNSENT, 
 		STATE_SYN_RCVD,
 		STATE_ESTAB
-	} sockstate;
+	};
 
 	struct Azocket {
 		uint32_t source_ip;
@@ -73,10 +73,8 @@ protected:
 
 		int backlog;
 
-		sockstate state;
+		AzocketState state;
 	};
-
-
 
 	// map: int (sockfd) -> Azocket
 	std::unordered_map<int, struct Azocket> sockfdToAzocket;
