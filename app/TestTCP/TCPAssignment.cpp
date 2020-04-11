@@ -452,6 +452,9 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			if (sockfdAndPidToAzocket[key].state != STATE_LISTEN) {
 				break;
 			}
+
+			std::cout << "backlog:" << sockfdAndPidToAzocket[key].backlog << std::endl;
+
 			if (sockfdAndPidToAzocket[key].backlog == 0){
 				break;
 			}
