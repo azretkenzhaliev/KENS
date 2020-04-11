@@ -260,7 +260,7 @@ void TCPAssignment::syscall_accept(
 	if (it != child_sockfds.end()) {
 		int child_sockfd = *it;
 		_syscall_getpeername(child_sockfd, pid, addr, addrlen);
-		sockfdAndPidToAzocket[key].child_sockfds.erase(it);
+		child_sockfds.erase(it);
 		this->returnSystemCall(syscallUUID, child_sockfd);
 		return;
 	}
@@ -449,6 +449,9 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			std::tie(sockfd, pid) = IPPortToSockfdAndPid[{dest_ip, dest_port}];
 			std::pair<int, int> key = {sockfd, pid};
 
+			if (sockfdAndPidToAzocket[key].state != STATE_LISTEN) {
+				break;
+			}
 			if (sockfdAndPidToAzocket[key].backlog == 0){
 				break;
 			}
