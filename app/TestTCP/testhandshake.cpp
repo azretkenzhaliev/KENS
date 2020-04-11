@@ -120,7 +120,7 @@ protected:
 protected:
 	void E_Main()
 	{
-		std::cout << "SR*NYI TEST\n";
+		// std::cout << "SR*NYI TEST\n";
 		std::vector<int> client_sockets;
 		std::vector<int> client_ports;
 		int connect_count = atoi(env["CONNECT_COUNT"].c_str());
@@ -130,7 +130,7 @@ protected:
 		long connect_time = atol(env["CONNECT_TIME"].c_str());
 		usleep(connect_time);
 
-		std::cout << "SR*NYI TEST PRODOLZHAETSYA\n";
+		// std::cout << "SR*NYI TEST PRODOLZHAETSYA\n";
 		for(int k=0; k<connect_count; k++)
 		{
 			int client_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -141,11 +141,11 @@ protected:
 			addr.sin_family = AF_INET;
 			addr.sin_addr.s_addr = inet_addr(env["CONNECT_ADDR"].c_str());
 			addr.sin_port = htons(atoi(env["CONNECT_PORT"].c_str()));
-			std::cout << ntohl(addr.sin_addr.s_addr) << " " << ntohs(addr.sin_port) << "\n";
-			std::cout << "SR*NYI TEST ZASHEL SLISHKOM DALEKO...\n";
+			// std::cout << ntohl(addr.sin_addr.s_addr) << " " << ntohs(addr.sin_port) << "\n";
+			// std::cout << "SR*NYI TEST ZASHEL SLISHKOM DALEKO...\n";
 
 			int ret = connect(client_socket, (struct sockaddr*)&addr, len);
-			std::cout << "Return = " << ret << "\n";
+			// std::cout << "Return = " << ret << "\n";
 			if(ret == 0)
 			{
 				struct sockaddr_in temp_addr;

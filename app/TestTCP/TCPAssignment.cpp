@@ -46,6 +46,7 @@ void TCPAssignment::finalize()
 
 int TCPAssignment::_syscall_socket(int pid) {
 	int fd = this->createFileDescriptor(pid);
+	std::cout << fd << " " << pid << std::endl;
 
 	if (fd != -1) {
 		// If the file descriptor was successfully created make a note of that.
@@ -110,10 +111,18 @@ int TCPAssignment::_syscall_bind(int sockfd, struct sockaddr *addr, socklen_t ad
 	uint16_t port = ntohs(((struct sockaddr_in *) &copied_addr)->sin_port);
 	uint32_t ip = ntohl(((struct sockaddr_in *) &copied_addr)->sin_addr.s_addr);
 
+	std::cout << port << " " << ip << std::endl;
+	std::cout << binded.size() << std::endl;
+	for (auto it: binded) {
+		std::cout << it.first << " " << it.second << std::endl;
+	}
+
 	// If the set of active bindings already contains either of the
 	// (port, 0.0.0.0) or (port, ip) pairs, it means that current
 	// binding is not allowed to happen, so return -1.
-	if (binded.find({port, 0}) != binded.end() || binded.find({port, ip}) != binded.end()) {
+	if (binded.find({port, 0}) != binded.end()
+	|| binded.find({port, ip}) != binded.end()) {
+		std::cout << "FOUND!" << std::endl;
 		return -1;
 	}
 
@@ -133,8 +142,13 @@ int TCPAssignment::_syscall_bind(int sockfd, struct sockaddr *addr, socklen_t ad
 void TCPAssignment::syscall_bind(
 	UUID syscallUUID, int pid, int sockfd,
 	struct sockaddr *addr, socklen_t addrlen) {
-	// If the socket desyscall_idscriptor does not exist or was already binded, return -1.
+	// If the socket descriptor does not exist or was already binded, return -1.
+	std::cout << "sockfd = " << sockfd << std::endl; 
 	if (!fds.count(sockfd) || sockfdToAddrInfo.count(sockfd)) {
+		std::cout << "Something wrong here..." << std::endl;
+		std::cout << sockfdToAddrInfo.count(sockfd) << std::endl;
+		struct sockaddr_in addr = *((struct sockaddr_in *) &sockfdToAddrInfo[sockfd].first);
+		std::cout << ntohl(addr.sin_addr.s_addr) << " " << ntohs(addr.sin_port) << std::endl;
 		this->returnSystemCall(syscallUUID, -1);
 		return;
 	}
@@ -431,6 +445,13 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			sockfdToAzocket[new_sockfd].dest_ip = source_ip;
 			sockfdToAzocket[new_sockfd].dest_port = source_port;
 			sockfdToAzocket[new_sockfd].ack_num = seq_num + 1;
+			
+			struct sockaddr_in addr;
+			addr.sin_family = AF_INET;
+			addr.sin_addr.s_addr = htonl(dest_ip);
+			addr.sin_port = htons(dest_port);
+			socklen_t addrlen = sizeof(addr);
+			sockfdToAddrInfo[new_sockfd] = {*((struct sockaddr *) &addr), addrlen};
 
 			// std::cout << "SYN: " << seq_num << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
 
@@ -480,7 +501,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 
 			if (sockfdToAzocket[parent_sockfd].accept_blocked){
 				std::vector<int> &child_sockfds = sockfdToAzocket[parent_sockfd].child_sockfds;
-				auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [=](const int &child_sockfd) {
+				auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [&](const int &child_sockfd) {
 					return child_sockfd == sockfd;
 				});
 				child_sockfds.erase(it);
