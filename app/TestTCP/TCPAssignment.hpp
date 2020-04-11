@@ -96,8 +96,11 @@ protected:
 			dest_port = _dest_port;
 		}
 
-		friend const bool operator < (SipDip f, SipDip s) {
-			return f.source_ip < s.source_ip || (f.source_ip == s.source_ip && f.source_port < s.source_port);
+		friend const bool operator < (const SipDip &f, const SipDip &s) {
+			return f.source_ip < s.source_ip
+			|| (f.source_ip == s.source_ip && f.source_port < s.source_port)
+			|| (f.source_ip == s.source_ip && f.source_port == s.source_port && f.dest_ip < s.dest_ip)
+			|| (f.source_ip == s.source_ip && f.source_port == s.source_port && f.dest_ip == s.dest_ip && f.dest_port < s.dest_port);
 		}
 	};
 	

@@ -58,9 +58,7 @@ int TCPAssignment::_syscall_socket(UUID syscallUUID, int pid, int type, int prot
 		azocket.state = STATE_CLOSED;
 
 		std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-		azocket.seq_num = htonl(std::uniform_int_distribution<uint32_t>(0, UINT32_MAX)(rng));
-
-		azocket.ack_num = 0;
+		azocket.seq_num = std::uniform_int_distribution<uint32_t>(0, UINT32_MAX)(rng);
 
 		sockfdToAzocket[fd] = azocket;
 	}
@@ -87,8 +85,8 @@ void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int sockfd) {
 		// sockfdToAddrInfo for each socket descriptor (key) stores its binding (value).
 		// To close a socket descriptor we need to remove its binding from
 		// the list of active bindings, which we store in a set (binded).
-		uint16_t port = ((struct sockaddr_in*) &addr)->sin_port;
-		uint32_t ip = ((struct sockaddr_in*) &addr)->sin_addr.s_addr;
+		uint16_t port = ntohs(((struct sockaddr_in *) &addr)->sin_port);
+		uint32_t ip = ntohl(((struct sockaddr_in *) &addr)->sin_addr.s_addr);
 		
 		// Remove the (port, ip) binding entry from the set (hash table) of active bindings
 		// and the (socket descriptor, binding) key-value pair from the
@@ -110,8 +108,8 @@ int TCPAssignment::_syscall_bind(int sockfd, struct sockaddr *addr, socklen_t ad
 	// freed without a notice, we'll be safe.
 	struct sockaddr copied_addr = *addr;
 
-	uint16_t port = ((struct sockaddr_in*) &copied_addr)->sin_port;
-	uint32_t ip = ((struct sockaddr_in*) &copied_addr)->sin_addr.s_addr;
+	uint16_t port = ntohs(((struct sockaddr_in *) &copied_addr)->sin_port);
+	uint32_t ip = ntohl(((struct sockaddr_in *) &copied_addr)->sin_addr.s_addr);
 
 	// If the set of active bindings already contains either of the
 	// (port, 0.0.0.0) or (port, ip) pairs, it means that current
@@ -165,7 +163,6 @@ void TCPAssignment::syscall_getsockname(
 void TCPAssignment::implicit_bind(int sockfd, uint32_t dest_ip) {
 	std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
 	uint16_t local_port = std::uniform_int_distribution<uint16_t>(1025, 65535)(rng);
-
 	uint8_t *dest_ip_by_8 = (uint8_t *) malloc(sizeof(uint32_t));
 
 	dest_ip_by_8[0] = (dest_ip >> 0) & 0xff;
@@ -182,9 +179,9 @@ void TCPAssignment::implicit_bind(int sockfd, uint32_t dest_ip) {
 		+ (local_ip_by_8[2] << 16)
 		+ (local_ip_by_8[3] << 24));
 
-	local_ip = ntohl(local_ip);
-	local_port = ntohs(local_port);
-
+	local_ip = htonl(local_ip);
+	local_port = htons(local_port);
+	
 	struct sockaddr_in buf;
 	buf.sin_family = AF_INET;
 	buf.sin_addr.s_addr = local_ip;
@@ -194,7 +191,7 @@ void TCPAssignment::implicit_bind(int sockfd, uint32_t dest_ip) {
 	socklen_t local_addrlen = sizeof(*local_addr);
 
 	while (_syscall_bind(sockfd, local_addr, local_addrlen) != 0){
-		local_port = ntohs(std::uniform_int_distribution<int>(1025, 65535)(rng));
+		local_port = htons(std::uniform_int_distribution<int>(1025, 65535)(rng));
 		buf.sin_port = local_port;
 	}
 }
@@ -209,7 +206,10 @@ void TCPAssignment::syscall_connect(
 	sockfdToAzocket[sockfd].dest_ip = dest_ip;
 	sockfdToAzocket[sockfd].dest_port = dest_port;
 
-	SipDip sipdip = getSipDip(sockfdToAzocket[sockfd].source_ip, sockfdToAzocket[sockfd].source_port, sockfdToAzocket[sockfd].dest_ip, sockfdToAzocket[sockfd].dest_port);
+	SipDip sipdip = getSipDip(
+		sockfdToAzocket[sockfd].source_ip, sockfdToAzocket[sockfd].source_port, 
+		sockfdToAzocket[sockfd].dest_ip, sockfdToAzocket[sockfd].dest_port
+	);
 	SipDipToSockfd[sipdip] = sockfd;
 
 	sendSYNPacket(sockfdToAzocket[sockfd]);
@@ -236,6 +236,8 @@ Packet* TCPAssignment::makePacket(struct Azocket &azocket, PacketType type) {
 	// 14 - Ethernet header
 	// 20 - IP header structure
 
+	// azocket.seq_num++;
+
 	Packet *packet = this->allocatePacket(54);
 
 	uint32_t source_ip = htonl(azocket.source_ip);
@@ -243,10 +245,11 @@ Packet* TCPAssignment::makePacket(struct Azocket &azocket, PacketType type) {
 	uint32_t dest_ip = htonl(azocket.dest_ip);
 	uint16_t dest_port = htons(azocket.dest_port);
 	uint32_t seq_num = htonl(azocket.seq_num);
-	uint32_t ack_num = htonl(azocket.ack_num);
 
-	// azocket.seq_num++;
-	// uint32_t ack_num = azocket.ack_num;
+	if (type != SYN) {
+		uint32_t ack_num = htonl(azocket.ack_num);
+		packet->writeData(14 + 20 + 8, &ack_num, 4);
+	}
 
 	uint16_t total_length = htons(20);
 	packet->writeData(14 + 2, &total_length, 2);
@@ -256,7 +259,6 @@ Packet* TCPAssignment::makePacket(struct Azocket &azocket, PacketType type) {
 	packet->writeData(14 + 20 + 0, &source_port, 2);
 	packet->writeData(14 + 20 + 2, &dest_port, 2);
 	packet->writeData(14 + 20 + 4, &seq_num, 4);
-	packet->writeData(14 + 20 + 8, &ack_num, 4);
 
 	uint8_t data_offset = 5 << 4;
 	packet->writeData(14 + 20 + 12, &data_offset, 1);
@@ -358,12 +360,14 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 	uint32_t dest_ip = 0;
 	uint16_t dest_port = 0;
 	uint32_t seq_num = 0;
+	uint32_t ack_num = 0;
 
 	packet->readData(14 + 12, &source_ip, 4);
 	packet->readData(14 + 16, &dest_ip, 4);
 	packet->readData(14 + 20 + 0, &source_port, 2);
 	packet->readData(14 + 20 + 2, &dest_port, 2);
 	packet->readData(14 + 20 + 4, &seq_num, 4);
+	packet->readData(14 + 20 + 8, &ack_num, 4);
 
 	freePacket(packet);
 
@@ -372,6 +376,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 	dest_ip = ntohl(dest_ip);
 	dest_port = ntohs(dest_port);
 	seq_num = ntohl(seq_num);
+	ack_num = ntohl(ack_num);
 
 	int sockfd;
 	SipDip sipdip;
@@ -388,8 +393,11 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			sockfdToAzocket[new_sockfd].source_port = dest_port;
 			sockfdToAzocket[new_sockfd].dest_ip = source_ip;
 			sockfdToAzocket[new_sockfd].dest_port = source_port;
+			sockfdToAzocket[new_sockfd].ack_num = seq_num + 1;
 
-			sipdip = getSipDip(source_ip, source_port, dest_ip, dest_port);
+			std::cout << "SYN: " << seq_num << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
+
+			sipdip = getSipDip(dest_ip, dest_port, source_ip, source_port);
 			SipDipToSockfd[sipdip] = new_sockfd;
 			
 			sendSYNACKPacket(sockfdToAzocket[new_sockfd]);
@@ -398,8 +406,16 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			break;
 		}
 		case PacketType::SYNACK: { // client established connection
-			sipdip = getSipDip(source_ip, source_port, dest_ip, dest_port);
+			sipdip = getSipDip(dest_ip, dest_port, source_ip, source_port);
 			sockfd = SipDipToSockfd[sipdip];
+
+			std::cout << "SYNACK: " << sockfd << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
+			if (ack_num != sockfdToAzocket[sockfd].seq_num + 1) {
+				// Not doing this call below because it could be just erroneous packet...
+				// Hope that the destination host will send us the right packet.
+				// this->returnSystemCall(sockfdToAzocket[sockfd].syscall_id, -1);
+				break;
+			}
 			
 			sockfdToAzocket[sockfd].ack_num = seq_num + 1;
 			sendACKPacket(sockfdToAzocket[sockfd]);
@@ -408,9 +424,18 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			this->returnSystemCall(sockfdToAzocket[sockfd].syscall_id, 0);
 			break;
 		}
-		case PacketType::ACK: {
-			sipdip = getSipDip(source_ip, source_port, dest_ip, dest_port);
+		case PacketType::ACK: { // server receives ACK
+			sipdip = getSipDip(dest_ip, dest_port, source_ip, source_port);
 			sockfd = SipDipToSockfd[sipdip];
+
+			std::cout << "ACK: " << sockfd << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
+			if (ack_num != sockfdToAzocket[sockfd].seq_num + 1) {
+				// Not doing this call below because it could be just erroneous packet...
+				// Hope that the destination host will send us the right packet.
+				// this->returnSystemCall(sockfdToAzocket[sockfd].syscall_id, -1);
+				break;
+			}
+			
 			sockfdToAzocket[sockfd].state = STATE_ESTAB;
 			break;
 		}
