@@ -449,6 +449,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			std::tie(sockfd, pid) = IPPortToSockfdAndPid[{dest_ip, dest_port}];
 			std::pair<int, int> key = {sockfd, pid};
 
+			std::cout << "backlog:" << sockfdAndPidToAzocket[key].backlog << std::endl;
+
 			if (sockfdAndPidToAzocket[key].backlog == 0){
 				break;
 			}
