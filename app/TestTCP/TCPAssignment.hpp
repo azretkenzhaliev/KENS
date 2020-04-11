@@ -64,26 +64,24 @@ protected:
 		uint16_t dest_port;
 
 		int pid;
+		int syscall_id;
 		int sockfd;
 
 		uint32_t seq_num;
 		uint32_t ack_num;
 
-		UUID syscall_id;
-
 		int backlog;
 
 		std::vector<int> child_sockfds;
 		int parent_sockfd;
-
-		bool accept_blocked = false;
+		bool accept_blocked;
 		UUID accept_syscall_id;
 		struct sockaddr *accept_addr;
 		socklen_t *accept_addrlen;
 		
-
-
 		AzocketState state;
+
+		Azocket() : backlog(0), accept_blocked(false), state(STATE_CLOSED) {}
 	};
 
 	// map: int (sockfd) -> Azocket
@@ -135,7 +133,7 @@ protected:
 		ACK = (1 << PacketFlag::FLAG_ACK)
 	};
 
-	virtual int _syscall_socket(UUID syscallUUID, int pid, int type, int protocol) final;
+	virtual int _syscall_socket(int pid) final;
 	virtual void syscall_socket(UUID syscallUUID, int pid, int type, int protocol) final;
 	virtual void syscall_close(UUID syscallUUID, int pid, int sockfd) final;
 	virtual int _syscall_bind(int sockfd, struct sockaddr *addr, socklen_t addrlen) final;
