@@ -218,9 +218,44 @@ void TCPAssignment::syscall_connect(
 	sockfdToAzocket[sockfd].state = STATE_SYNSENT;
 }
 
-void TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd, 
-	struct sockaddr *addr, socklen_t* addrlen) {
+void TCPAssignment::syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog){
+	sockfdToAzocket[sockfd].backlog = backlog;
+	sockfdToAzocket[sockfd].state = STATE_LISTEN;
+	this->returnSystemCall(syscallUUID, 0);
+}
 
+void TCPAssignment::syscall_accept(
+	UUID syscallUUID, int pid, int sockfd, 
+	struct sockaddr *addr, socklen_t *addrlen){
+	
+	int accepted = 0;
+	bool found = false;
+	// return estab connections if there is one
+	std::vector<int> child_sockfds = sockfdToAzocket[sockfd].child_sockfds;
+	for(int i = 0; i < child_sockfds.size(); i++){
+		if (sockfdToAzocket[child_sockfds[i]].state == STATE_ESTAB){
+			_syscall_getpeername(child_sockfds[i], addr, addrlen);
+			found = true;
+			accepted = i;
+			break;
+		}
+	}
+
+	if (found){
+		int child_sockfd = child_sockfds[accepted];
+		sockfdToAzocket[sockfd].child_sockfds.erase(child_sockfds.begin() + accepted);
+		this->returnSystemCall(syscallUUID, child_sockfd);
+		return;
+	}
+	
+	// memorize the add and addrlen, then in ACK set them before returning
+	sockfdToAzocket[sockfd].accept_addr = addr;
+	sockfdToAzocket[sockfd].accept_addrlen = addrlen;
+	sockfdToAzocket[sockfd].accept_blocked = true;
+	sockfdToAzocket[sockfd].accept_syscall_id = syscallUUID;
+}
+
+void TCPAssignment::_syscall_getpeername(int sockfd, struct sockaddr *addr, socklen_t* addrlen) {
 	struct sockaddr_in *buf = new struct sockaddr_in;
 	buf->sin_family = AF_INET;
 	buf->sin_addr.s_addr = htonl(sockfdToAzocket[sockfd].dest_ip);
@@ -228,7 +263,12 @@ void TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd,
 
 	*addr = *((struct sockaddr *) buf);
 	*addrlen = sizeof(*addr);
+}
 
+void TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd, 
+	struct sockaddr *addr, socklen_t* addrlen) {
+
+	_syscall_getpeername(sockfd, addr, addrlen);
 	this->returnSystemCall(syscallUUID, 0);
 }
 
@@ -315,12 +355,12 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 		 		static_cast<struct sockaddr*>(param.param2_ptr), (socklen_t)param.param3_int);
 		break;
 	case LISTEN:
-		//this->syscall_listen(syscallUUID, pid, param.param1_int, param.param2_int);
+		this->syscall_listen(syscallUUID, pid, param.param1_int, param.param2_int);
 		break;
 	case ACCEPT:
-		//this->syscall_accept(syscallUUID, pid, param.param1_int,
-		//		static_cast<struct sockaddr*>(param.param2_ptr),
-		//		static_cast<socklen_t*>(param.param3_ptr));
+		this->syscall_accept(syscallUUID, pid, param.param1_int,
+				static_cast<struct sockaddr*>(param.param2_ptr),
+				static_cast<socklen_t*>(param.param3_ptr));
 		break;
 	case BIND:
 		this->syscall_bind(syscallUUID, pid, param.param1_int,
@@ -387,7 +427,14 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 		}
 		case PacketType::SYN: { // server accepts connection
 			sockfd = IPPortToSockfd[{dest_ip, dest_port}];
+			if (sockfdToAzocket[sockfd].backlog == 0){
+				break;
+			}
+
 			int new_sockfd = _syscall_socket(sockfdToAzocket[sockfd].syscall_id, sockfdToAzocket[sockfd].pid, 0, 0);
+			sockfdToAzocket[sockfd].child_sockfds.push_back(new_sockfd);
+			sockfdToAzocket[sockfd].backlog--;
+			sockfdToAzocket[new_sockfd].parent_sockfd = sockfd;
 
 			sockfdToAzocket[new_sockfd].source_ip = dest_ip;
 			sockfdToAzocket[new_sockfd].source_port = dest_port;
@@ -395,7 +442,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			sockfdToAzocket[new_sockfd].dest_port = source_port;
 			sockfdToAzocket[new_sockfd].ack_num = seq_num + 1;
 
-			std::cout << "SYN: " << seq_num << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
+			// std::cout << "SYN: " << seq_num << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
 
 			sipdip = getSipDip(dest_ip, dest_port, source_ip, source_port);
 			SipDipToSockfd[sipdip] = new_sockfd;
@@ -409,7 +456,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			sipdip = getSipDip(dest_ip, dest_port, source_ip, source_port);
 			sockfd = SipDipToSockfd[sipdip];
 
-			std::cout << "SYNACK: " << sockfd << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
+			// std::cout << "SYNACK: " << sockfd << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
 			if (ack_num != sockfdToAzocket[sockfd].seq_num + 1) {
 				// Not doing this call below because it could be just erroneous packet...
 				// Hope that the destination host will send us the right packet.
@@ -428,7 +475,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			sipdip = getSipDip(dest_ip, dest_port, source_ip, source_port);
 			sockfd = SipDipToSockfd[sipdip];
 
-			std::cout << "ACK: " << sockfd << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
+			// std::cout << "ACK: " << sockfd << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
 			if (ack_num != sockfdToAzocket[sockfd].seq_num + 1) {
 				// Not doing this call below because it could be just erroneous packet...
 				// Hope that the destination host will send us the right packet.
@@ -437,6 +484,26 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			}
 			
 			sockfdToAzocket[sockfd].state = STATE_ESTAB;
+			
+			int parent_sockfd = sockfdToAzocket[sockfd].parent_sockfd;
+			sockfdToAzocket[parent_sockfd].backlog++;
+
+			if (sockfdToAzocket[parent_sockfd].accept_blocked){
+				std::vector<int> v = sockfdToAzocket[parent_sockfd].child_sockfds;
+				int index = 0;
+				for (int i = 0; i < v.size(); i++){
+					if (sockfdToAzocket[parent_sockfd].child_sockfds[i] == sockfd){
+						index = i;
+						break;
+					}
+				}
+				sockfdToAzocket[parent_sockfd].child_sockfds.erase(v.begin() + index);
+
+				_syscall_getpeername(sockfd, sockfdToAzocket[parent_sockfd].accept_addr, sockfdToAzocket[parent_sockfd].accept_addrlen);
+				sockfdToAzocket[parent_sockfd].accept_blocked = false;
+				this->returnSystemCall(sockfdToAzocket[parent_sockfd].accept_syscall_id, sockfd);
+			}
+
 			break;
 		}
 	}

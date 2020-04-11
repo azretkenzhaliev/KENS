@@ -73,6 +73,16 @@ protected:
 
 		int backlog;
 
+		std::vector<int> child_sockfds;
+		int parent_sockfd;
+
+		bool accept_blocked = false;
+		UUID accept_syscall_id;
+		struct sockaddr *accept_addr;
+		socklen_t *accept_addrlen;
+		
+
+
 		AzocketState state;
 	};
 
@@ -132,7 +142,10 @@ protected:
 	virtual void syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen) final;
 	virtual void syscall_getsockname(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t* addrlen) final;
 	virtual void syscall_connect(UUID syscallUUID,  int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen) final;
+	virtual void syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog) final;
+	virtual void syscall_accept(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen) final;
 	virtual void syscall_getpeername(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t* addrlen) final;
+	virtual void _syscall_getpeername(int sockfd, struct sockaddr *addr, socklen_t* addrlen) final;
 	virtual void systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param) final;
 	virtual void packetArrived(std::string fromModule, Packet* packet) final;
 
