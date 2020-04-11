@@ -50,7 +50,8 @@ int TCPAssignment::_syscall_socket(int pid) {
 
 	if (fd != -1) {
 		// If the file descriptor was successfully created make a note of that.
-		fds.insert(fd);
+		std::pair<int, int> key = {fd, pid};
+		fds.insert(key);
 
 		Azocket azocket;
 		azocket.pid = pid;
@@ -60,7 +61,7 @@ int TCPAssignment::_syscall_socket(int pid) {
 		std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
 		azocket.seq_num = std::uniform_int_distribution<uint32_t>(0, UINT32_MAX)(rng);
 
-		sockfdToAzocket[fd] = azocket;
+		sockfdAndPidToAzocket[key] = azocket;
 	}
 
 	// Return -1 or the created file descriptor.
@@ -72,17 +73,19 @@ void TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int type, int prot
 }
 
 void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int sockfd) {
-	if (fds.find(sockfd) == fds.end()) {
+	std::pair<int, int> key = {sockfd, pid};
+
+	if (fds.find(key) == fds.end()) {
 		// If somebody tries to close the socket descriptor which doesn't exist, return -1.
 		this->returnSystemCall(syscallUUID, -1);
 		return;
 	}
 
-	if (sockfdToAddrInfo.count(sockfd)) {
+	if (sockfdAndPidToAddrInfo.count(key)) {
 		// If the given socket descriptor was binded - unbind it first.
-		struct sockaddr addr = sockfdToAddrInfo[sockfd].first;
+		struct sockaddr addr = sockfdAndPidToAddrInfo[key].first;
 
-		// sockfdToAddrInfo for each socket descriptor (key) stores its binding (value).
+		// sockfdAndPidToAddrInfo for each socket descriptor (key) stores its binding (value).
 		// To close a socket descriptor we need to remove its binding from
 		// the list of active bindings, which we store in a set (binded).
 		uint16_t port = ntohs(((struct sockaddr_in *) &addr)->sin_port);
@@ -90,19 +93,19 @@ void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int sockfd) {
 		
 		// Remove the (port, ip) binding entry from the set (hash table) of active bindings
 		// and the (socket descriptor, binding) key-value pair from the
-		// sockfdToAddrInfo hash table.
+		// sockfdAndPidToAddrInfo hash table.
 		binded.erase({port, ip});
-		sockfdToAddrInfo.erase(sockfd);
+		sockfdAndPidToAddrInfo.erase(key);
 	}
 
 	// Remove the socket descriptor from the set (hash table) of active socket descriptors.
-	fds.erase(sockfd);
-	sockfdToAzocket.erase(sockfd);
+	fds.erase(key);
+	sockfdAndPidToAzocket.erase(key);
 	this->removeFileDescriptor(pid, sockfd);
 	this->returnSystemCall(syscallUUID, 0);
 }
 
-int TCPAssignment::_syscall_bind(int sockfd, struct sockaddr *addr, socklen_t addrlen) {
+int TCPAssignment::_syscall_bind(int sockfd, int pid, struct sockaddr *addr, socklen_t addrlen) {
 	// We decided to copy the given data (binding), so that
 	// in case if the data in the given pointer is ever
 	// freed without a notice, we'll be safe.
@@ -126,16 +129,18 @@ int TCPAssignment::_syscall_bind(int sockfd, struct sockaddr *addr, socklen_t ad
 		return -1;
 	}
 
+	std::pair<int, int> key = {sockfd, pid};
+
 	// If the checks passed, add (socket descriptor, binding) pair into the hash table
 	// and put the binding information into the set (hash table) of active bindings.
-	sockfdToAddrInfo[sockfd] = {copied_addr, addrlen};
+	sockfdAndPidToAddrInfo[key] = {copied_addr, addrlen};
 
-	IPPortToSockfd[{ip, port}] = sockfd;
+	IPPortToSockfdAndPid[{ip, port}] = {sockfd, pid};
 
 	binded.insert({port, ip});
 
-	sockfdToAzocket[sockfd].source_ip = ip;
-	sockfdToAzocket[sockfd].source_port = port;
+	sockfdAndPidToAzocket[key].source_ip = ip;
+	sockfdAndPidToAzocket[key].source_port = port;
 	return 0;
 }
 
@@ -144,36 +149,38 @@ void TCPAssignment::syscall_bind(
 	struct sockaddr *addr, socklen_t addrlen) {
 	// If the socket descriptor does not exist or was already binded, return -1.
 	std::cout << "sockfd = " << sockfd << std::endl; 
-	if (!fds.count(sockfd) || sockfdToAddrInfo.count(sockfd)) {
+	std::pair<int, int> key = {sockfd, pid};
+	if (!fds.count(key) || sockfdAndPidToAddrInfo.count(key)) {
 		std::cout << "Something wrong here..." << std::endl;
-		std::cout << sockfdToAddrInfo.count(sockfd) << std::endl;
-		struct sockaddr_in addr = *((struct sockaddr_in *) &sockfdToAddrInfo[sockfd].first);
+		std::cout << sockfdAndPidToAddrInfo.count(key) << std::endl;
+		struct sockaddr_in addr = *((struct sockaddr_in *) &sockfdAndPidToAddrInfo[key].first);
 		std::cout << ntohl(addr.sin_addr.s_addr) << " " << ntohs(addr.sin_port) << std::endl;
 		this->returnSystemCall(syscallUUID, -1);
 		return;
 	}
 
-	this->returnSystemCall(syscallUUID, _syscall_bind(sockfd, addr, addrlen));
+	this->returnSystemCall(syscallUUID, _syscall_bind(sockfd, pid, addr, addrlen));
 }
 
 void TCPAssignment::syscall_getsockname(
 	UUID syscallUUID, int pid, int sockfd,
 	struct sockaddr *addr, socklen_t* addrlen) {
 	// If the socket descriptor does not exist or was not binded, return -1.
-	if (!fds.count(sockfd) || !sockfdToAddrInfo.count(sockfd)) {
+	std::pair<int, int> key = {sockfd, pid};
+	if (!fds.count(key) || !sockfdAndPidToAddrInfo.count(key)) {
 		this->returnSystemCall(syscallUUID, -1);
 		return;
 	}
 
 	// Fill the content of the given pointers with information
-	// from the sockfdToAddrInfo hash table.
-	*addr = sockfdToAddrInfo[sockfd].first;
-	*addrlen = sockfdToAddrInfo[sockfd].second;
+	// from the sockfdAndPidToAddrInfo hash table.
+	*addr = sockfdAndPidToAddrInfo[key].first;
+	*addrlen = sockfdAndPidToAddrInfo[key].second;
 
 	this->returnSystemCall(syscallUUID, 0);
 }
 
-void TCPAssignment::implicit_bind(int sockfd, uint32_t dest_ip) {
+void TCPAssignment::implicit_bind(int sockfd, int pid, uint32_t dest_ip) {
 	std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
 	uint16_t local_port = std::uniform_int_distribution<uint16_t>(1025, 65535)(rng);
 	uint8_t *dest_ip_by_8 = (uint8_t *) malloc(sizeof(uint32_t));
@@ -203,7 +210,7 @@ void TCPAssignment::implicit_bind(int sockfd, uint32_t dest_ip) {
 	struct sockaddr *local_addr = (struct sockaddr *) &buf;
 	socklen_t local_addrlen = sizeof(*local_addr);
 
-	while (_syscall_bind(sockfd, local_addr, local_addrlen) != 0){
+	while (_syscall_bind(sockfd, pid, local_addr, local_addrlen) != 0){
 		local_port = htons(std::uniform_int_distribution<int>(1025, 65535)(rng));
 		buf.sin_port = local_port;
 	}
@@ -212,59 +219,66 @@ void TCPAssignment::implicit_bind(int sockfd, uint32_t dest_ip) {
 void TCPAssignment::syscall_connect(
 	UUID syscallUUID,  int pid, int sockfd,
 	struct sockaddr *addr, socklen_t addrlen) {
+	std::pair<int, int> key = {sockfd, pid};
+
 	uint32_t dest_ip = ntohl(((struct sockaddr_in *) addr)->sin_addr.s_addr);
 	uint16_t dest_port = ntohs(((struct sockaddr_in *) addr)->sin_port);
-	implicit_bind(sockfd, dest_ip);
+	implicit_bind(sockfd, pid, dest_ip);
 
-	sockfdToAzocket[sockfd].dest_ip = dest_ip;
-	sockfdToAzocket[sockfd].dest_port = dest_port;
+	sockfdAndPidToAzocket[key].dest_ip = dest_ip;
+	sockfdAndPidToAzocket[key].dest_port = dest_port;
 
 	SipDip sipdip = getSipDip(
-		sockfdToAzocket[sockfd].source_ip, sockfdToAzocket[sockfd].source_port, 
-		sockfdToAzocket[sockfd].dest_ip, sockfdToAzocket[sockfd].dest_port
+		sockfdAndPidToAzocket[key].source_ip, sockfdAndPidToAzocket[key].source_port, 
+		sockfdAndPidToAzocket[key].dest_ip, sockfdAndPidToAzocket[key].dest_port
 	);
-	SipDipToSockfd[sipdip] = sockfd;
+	SipDipToSockfdAndPid[sipdip] = {sockfd, pid};
 
-	sendSYNPacket(sockfdToAzocket[sockfd]);
+	sendSYNPacket(sockfdAndPidToAzocket[key]);
 
-	sockfdToAzocket[sockfd].syscall_id = syscallUUID;
-	sockfdToAzocket[sockfd].state = STATE_SYNSENT;
+	sockfdAndPidToAzocket[key].syscall_id = syscallUUID;
+	sockfdAndPidToAzocket[key].state = STATE_SYNSENT;
 }
 
-void TCPAssignment::syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog){
-	sockfdToAzocket[sockfd].backlog = backlog;
-	sockfdToAzocket[sockfd].state = STATE_LISTEN;
+void TCPAssignment::syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog) {
+	std::pair<int, int> key = {sockfd, pid};
+	sockfdAndPidToAzocket[key].backlog = backlog;
+	sockfdAndPidToAzocket[key].state = STATE_LISTEN;
 	this->returnSystemCall(syscallUUID, 0);
 }
 
 void TCPAssignment::syscall_accept(
 	UUID syscallUUID, int pid, int sockfd, 
-	struct sockaddr *addr, socklen_t *addrlen){
+	struct sockaddr *addr, socklen_t *addrlen) {
+	std::pair<int, int> key = {sockfd, pid};
+
 	// return estab connections if there is one
-	std::vector<int> &child_sockfds = sockfdToAzocket[sockfd].child_sockfds;	
+	std::vector<int> &child_sockfds = sockfdAndPidToAzocket[key].child_sockfds;	
 	auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [=](int sockfd) {
-		return sockfdToAzocket[sockfd].state == STATE_ESTAB;
+		return sockfdAndPidToAzocket[key].state == STATE_ESTAB;
 	});
 	if (it != child_sockfds.end()) {
 		int child_sockfd = *it;
-		_syscall_getpeername(child_sockfd, addr, addrlen);
-		sockfdToAzocket[sockfd].child_sockfds.erase(it);
+		_syscall_getpeername(child_sockfd, pid, addr, addrlen);
+		sockfdAndPidToAzocket[key].child_sockfds.erase(it);
 		this->returnSystemCall(syscallUUID, child_sockfd);
 		return;
 	}
-	
+
 	// memorize the add and addrlen, then in ACK set them before returning
-	sockfdToAzocket[sockfd].accept_addr = addr;
-	sockfdToAzocket[sockfd].accept_addrlen = addrlen;
-	sockfdToAzocket[sockfd].accept_blocked = true;
-	sockfdToAzocket[sockfd].accept_syscall_id = syscallUUID;
+	sockfdAndPidToAzocket[key].accept_addr = addr;
+	sockfdAndPidToAzocket[key].accept_addrlen = addrlen;
+	sockfdAndPidToAzocket[key].accept_blocked = true;
+	sockfdAndPidToAzocket[key].accept_syscall_id = syscallUUID;
 }
 
-void TCPAssignment::_syscall_getpeername(int sockfd, struct sockaddr *addr, socklen_t* addrlen) {
+void TCPAssignment::_syscall_getpeername(int sockfd, int pid, struct sockaddr *addr, socklen_t* addrlen) {
+	std::pair<int, int> key = {sockfd, pid};
+
 	struct sockaddr_in buf;
 	buf.sin_family = AF_INET;
-	buf.sin_addr.s_addr = htonl(sockfdToAzocket[sockfd].dest_ip);
-	buf.sin_port = htons(sockfdToAzocket[sockfd].dest_port);
+	buf.sin_addr.s_addr = htonl(sockfdAndPidToAzocket[key].dest_ip);
+	buf.sin_port = htons(sockfdAndPidToAzocket[key].dest_port);
 
 	*addr = *((struct sockaddr *) &buf);
 	*addrlen = sizeof(*addr);
@@ -272,7 +286,7 @@ void TCPAssignment::_syscall_getpeername(int sockfd, struct sockaddr *addr, sock
 
 void TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd, 
 	struct sockaddr *addr, socklen_t* addrlen) {
-	_syscall_getpeername(sockfd, addr, addrlen);
+	_syscall_getpeername(sockfd, pid, addr, addrlen);
 	this->returnSystemCall(syscallUUID, 0);
 }
 
@@ -423,6 +437,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 	ack_num = ntohl(ack_num);
 
 	int sockfd;
+	int pid;
+
 	SipDip sipdip;
 
 	switch ((uint16_t) flags) {
@@ -430,85 +446,95 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			break;
 		}
 		case PacketType::SYN: { // server accepts connection
-			sockfd = IPPortToSockfd[{dest_ip, dest_port}];
-			if (sockfdToAzocket[sockfd].backlog == 0){
+			std::tie(sockfd, pid) = IPPortToSockfdAndPid[{dest_ip, dest_port}];
+			std::pair<int, int> key = {sockfd, pid};
+
+			if (sockfdAndPidToAzocket[key].backlog == 0){
 				break;
 			}
 
-			int new_sockfd = _syscall_socket(sockfdToAzocket[sockfd].pid);
-			sockfdToAzocket[sockfd].child_sockfds.push_back(new_sockfd);
-			sockfdToAzocket[sockfd].backlog--;
-			sockfdToAzocket[new_sockfd].parent_sockfd = sockfd;
+			int new_sockfd = _syscall_socket(pid);
+			sockfdAndPidToAzocket[key].child_sockfds.push_back(new_sockfd);
+			sockfdAndPidToAzocket[key].backlog--;
 
-			sockfdToAzocket[new_sockfd].source_ip = dest_ip;
-			sockfdToAzocket[new_sockfd].source_port = dest_port;
-			sockfdToAzocket[new_sockfd].dest_ip = source_ip;
-			sockfdToAzocket[new_sockfd].dest_port = source_port;
-			sockfdToAzocket[new_sockfd].ack_num = seq_num + 1;
+			std::pair<int, int> new_key = {new_sockfd, pid};
+			sockfdAndPidToAzocket[new_key].parent_sockfd = sockfd;
+
+			sockfdAndPidToAzocket[new_key].source_ip = dest_ip;
+			sockfdAndPidToAzocket[new_key].source_port = dest_port;
+			sockfdAndPidToAzocket[new_key].dest_ip = source_ip;
+			sockfdAndPidToAzocket[new_key].dest_port = source_port;
+			sockfdAndPidToAzocket[new_key].ack_num = seq_num + 1;
 			
 			struct sockaddr_in addr;
 			addr.sin_family = AF_INET;
 			addr.sin_addr.s_addr = htonl(dest_ip);
 			addr.sin_port = htons(dest_port);
 			socklen_t addrlen = sizeof(addr);
-			sockfdToAddrInfo[new_sockfd] = {*((struct sockaddr *) &addr), addrlen};
+			sockfdAndPidToAddrInfo[new_key] = {*((struct sockaddr *) &addr), addrlen};
 
-			// std::cout << "SYN: " << seq_num << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
+			// std::cout << "SYN: " << seq_num << " " << ack_num << " " << sockfdAndPidToAzocket[sockfd].seq_num << "\n";
 
 			sipdip = getSipDip(dest_ip, dest_port, source_ip, source_port);
-			SipDipToSockfd[sipdip] = new_sockfd;
+			SipDipToSockfdAndPid[sipdip] = new_key;
 			
-			sendSYNACKPacket(sockfdToAzocket[new_sockfd]);
+			sendSYNACKPacket(sockfdAndPidToAzocket[new_key]);
 
-			sockfdToAzocket[new_sockfd].state = STATE_SYN_RCVD;
+			sockfdAndPidToAzocket[new_key].state = STATE_SYN_RCVD;
 			break;
 		}
 		case PacketType::SYNACK: { // client established connection
 			sipdip = getSipDip(dest_ip, dest_port, source_ip, source_port);
-			sockfd = SipDipToSockfd[sipdip];
+			std::tie(sockfd, pid) = SipDipToSockfdAndPid[sipdip];
+			std::pair<int, int> key = {sockfd, pid};
 
-			// std::cout << "SYNACK: " << sockfd << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
-			if (ack_num != sockfdToAzocket[sockfd].seq_num + 1) {
+			// std::cout << "SYNACK: " << sockfd << " " << ack_num << " " << sockfdAndPidToAzocket[sockfd].seq_num << "\n";
+			if (ack_num != sockfdAndPidToAzocket[key].seq_num + 1) {
 				// Not doing this call below because it could be just erroneous packet...
 				// Hope that the destination host will send us the right packet.
-				// this->returnSystemCall(sockfdToAzocket[sockfd].syscall_id, -1);
+				// this->returnSystemCall(sockfdAndPidToAzocket[sockfd].syscall_id, -1);
 				break;
 			}
 			
-			sockfdToAzocket[sockfd].ack_num = seq_num + 1;
-			sendACKPacket(sockfdToAzocket[sockfd]);
+			sockfdAndPidToAzocket[key].ack_num = seq_num + 1;
+			sendACKPacket(sockfdAndPidToAzocket[key]);
 
-			sockfdToAzocket[sockfd].state = STATE_ESTAB;
-			this->returnSystemCall(sockfdToAzocket[sockfd].syscall_id, 0);
+			sockfdAndPidToAzocket[key].state = STATE_ESTAB;
+			this->returnSystemCall(sockfdAndPidToAzocket[key].syscall_id, 0);
 			break;
 		}
 		case PacketType::ACK: { // server receives ACK
 			sipdip = getSipDip(dest_ip, dest_port, source_ip, source_port);
-			sockfd = SipDipToSockfd[sipdip];
+			std::tie(sockfd, pid) = SipDipToSockfdAndPid[sipdip];
+			std::pair<int, int> key = {sockfd, pid};
 
-			// std::cout << "ACK: " << sockfd << " " << ack_num << " " << sockfdToAzocket[sockfd].seq_num << "\n";
-			if (ack_num != sockfdToAzocket[sockfd].seq_num + 1) {
+			// std::cout << "ACK: " << sockfd << " " << ack_num << " " << sockfdAndPidToAzocket[sockfd].seq_num << "\n";
+			if (ack_num != sockfdAndPidToAzocket[key].seq_num + 1) {
 				// Not doing this call below because it could be just erroneous packet...
 				// Hope that the destination host will send us the right packet.
-				// this->returnSystemCall(sockfdToAzocket[sockfd].syscall_id, -1);
+				// this->returnSystemCall(sockfdAndPidToAzocket[sockfd].syscall_id, -1);
 				break;
 			}
 			
-			sockfdToAzocket[sockfd].state = STATE_ESTAB;
+			sockfdAndPidToAzocket[key].state = STATE_ESTAB;
 			
-			int parent_sockfd = sockfdToAzocket[sockfd].parent_sockfd;
-			sockfdToAzocket[parent_sockfd].backlog++;
+			int parent_sockfd = sockfdAndPidToAzocket[key].parent_sockfd;
+			std::pair<int, int> parent_key = {parent_sockfd, pid};
+			sockfdAndPidToAzocket[parent_key].backlog++;
 
-			if (sockfdToAzocket[parent_sockfd].accept_blocked){
-				std::vector<int> &child_sockfds = sockfdToAzocket[parent_sockfd].child_sockfds;
+			if (sockfdAndPidToAzocket[parent_key].accept_blocked){
+				std::vector<int> &child_sockfds = sockfdAndPidToAzocket[parent_key].child_sockfds;
 				auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [&](const int &child_sockfd) {
 					return child_sockfd == sockfd;
 				});
 				child_sockfds.erase(it);
 
-				_syscall_getpeername(sockfd, sockfdToAzocket[parent_sockfd].accept_addr, sockfdToAzocket[parent_sockfd].accept_addrlen);
-				sockfdToAzocket[parent_sockfd].accept_blocked = false;
-				this->returnSystemCall(sockfdToAzocket[parent_sockfd].accept_syscall_id, sockfd);
+				_syscall_getpeername(sockfd, pid,
+					sockfdAndPidToAzocket[parent_key].accept_addr, 
+					sockfdAndPidToAzocket[parent_key].accept_addrlen
+				);
+				sockfdAndPidToAzocket[parent_key].accept_blocked = false;
+				this->returnSystemCall(sockfdAndPidToAzocket[parent_key].accept_syscall_id, sockfd);
 			}
 
 			break;

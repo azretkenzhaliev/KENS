@@ -35,15 +35,15 @@ public:
 	virtual ~TCPAssignment();
 protected:
 		// fds is a hash table for the active file descriptors.
-	std::unordered_set<int> fds;
+	std::unordered_set<std::pair<int, int>> fds;
 
-	// sockfdToAddrInfo is a hash table, which contains
+	// sockfdAndPidToAddrInfo is a hash table, which contains
 	// (socket descriptor, (port/ip info, length of info in bytes)).
 	// It is the main data structure used for the effective
 	// socket descriptor <-> port/ip translation.
-	std::unordered_map<int, std::pair<struct sockaddr, socklen_t>> sockfdToAddrInfo;
+	std::unordered_map<std::pair<int, int>, std::pair<struct sockaddr, socklen_t>> sockfdAndPidToAddrInfo;
 	
-	std::unordered_map<std::pair<uint32_t, uint16_t>, int> IPPortToSockfd;
+	std::unordered_map<std::pair<uint32_t, uint16_t>, std::pair<int, int>> IPPortToSockfdAndPid;
 
 	// binded is a hash table, which stores the active port/ip bindings.
 	// It is the main data structure used for binding collision checking.
@@ -84,8 +84,8 @@ protected:
 		Azocket() : backlog(0), accept_blocked(false), state(STATE_CLOSED) {}
 	};
 
-	// map: int (sockfd) -> Azocket
-	std::unordered_map<int, struct Azocket> sockfdToAzocket;
+	// map: int, int (sockfd, pid) -> Azocket
+	std::unordered_map<std::pair<int, int>, struct Azocket> sockfdAndPidToAzocket;
 
 	struct SipDip {
 		uint32_t source_ip;
@@ -112,8 +112,8 @@ protected:
 		}
 	};
 	
-	// map: SipDip -> sockfd
-	std::map<struct SipDip, int> SipDipToSockfd;
+	// map: SipDip -> sockfd, pid
+	std::map<struct SipDip, std::pair<int, int>> SipDipToSockfdAndPid;
 
 	enum PacketFlag : uint8_t {
 		FLAG_FIN,
@@ -136,18 +136,18 @@ protected:
 	virtual int _syscall_socket(int pid) final;
 	virtual void syscall_socket(UUID syscallUUID, int pid, int type, int protocol) final;
 	virtual void syscall_close(UUID syscallUUID, int pid, int sockfd) final;
-	virtual int _syscall_bind(int sockfd, struct sockaddr *addr, socklen_t addrlen) final;
+	virtual int _syscall_bind(int sockfd, int pid, struct sockaddr *addr, socklen_t addrlen) final;
 	virtual void syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen) final;
 	virtual void syscall_getsockname(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t* addrlen) final;
 	virtual void syscall_connect(UUID syscallUUID,  int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen) final;
 	virtual void syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog) final;
 	virtual void syscall_accept(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen) final;
 	virtual void syscall_getpeername(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t* addrlen) final;
-	virtual void _syscall_getpeername(int sockfd, struct sockaddr *addr, socklen_t* addrlen) final;
+	virtual void _syscall_getpeername(int sockfd, int pid, struct sockaddr *addr, socklen_t* addrlen) final;
 	virtual void systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param) final;
 	virtual void packetArrived(std::string fromModule, Packet* packet) final;
 
-	virtual void implicit_bind(int sockfd, uint32_t dest_ip) final;
+	virtual void implicit_bind(int sockfd, int pid, uint32_t dest_ip) final;
 	virtual uint8_t getFlags(Packet *packet) final;
 	virtual Packet* makePacket(struct Azocket &azocket, PacketType type) final;
 	virtual void sendSYNPacket(struct Azocket &azocket) final;	
