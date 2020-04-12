@@ -254,13 +254,14 @@ void TCPAssignment::syscall_accept(
 
 	// return estab connections if there is one
 	std::vector<int> &child_sockfds = sockfdAndPidToAzocket[key].child_sockfds;	
-	auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [=](int sockfd) {
-		return sockfdAndPidToAzocket[key].state == STATE_ESTAB;
+	auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [&](int child_sockfd) {
+		std::pair<int, int> child_key = {child_sockfd, pid};
+		return sockfdAndPidToAzocket[child_key].state == STATE_ESTAB;
 	});
 	if (it != child_sockfds.end()) {
 		int child_sockfd = *it;
-		_syscall_getpeername(child_sockfd, pid, addr, addrlen);
 		child_sockfds.erase(it);
+		_syscall_getpeername(child_sockfd, pid, addr, addrlen);
 		this->returnSystemCall(syscallUUID, child_sockfd);
 		return;
 	}
@@ -453,7 +454,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 				break;
 			}
 
-			std::cout << "backlog:" << sockfdAndPidToAzocket[key].backlog << std::endl;
+			std::cout << "SYN: " << sockfd << " " << pid << " " << sockfdAndPidToAzocket[key].backlog << std::endl;
 
 			if (sockfdAndPidToAzocket[key].backlog == 0){
 				break;
@@ -527,6 +528,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			int parent_sockfd = sockfdAndPidToAzocket[key].parent_sockfd;
 			std::pair<int, int> parent_key = {parent_sockfd, pid};
 			sockfdAndPidToAzocket[parent_key].backlog++;
+
+			std::cout << "ACK: " << parent_sockfd << " " << pid << " " << sockfdAndPidToAzocket[parent_key].backlog << std::endl;
 
 			if (sockfdAndPidToAzocket[parent_key].accept_blocked){
 				std::vector<int> &child_sockfds = sockfdAndPidToAzocket[parent_key].child_sockfds;
