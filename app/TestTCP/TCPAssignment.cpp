@@ -46,25 +46,14 @@ void TCPAssignment::finalize()
 
 int TCPAssignment::_syscall_socket(int pid) {
 	int fd = this->createFileDescriptor(pid);
-	std::cout << fd << " " << pid << std::endl;
+	// std::cout << "_syscall_socket -> " << fd << " " << pid << std::endl;
 
 	if (fd != -1) {
-		// If the file descriptor was successfully created make a note of that.
-		std::pair<int, int> key = {fd, pid};
-		fds.insert(key);
-
-		Azocket azocket;
-		azocket.pid = pid;
-		azocket.sockfd = fd;
-		azocket.state = STATE_CLOSED;
-
-		std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-		azocket.seq_num = std::uniform_int_distribution<uint32_t>(0, UINT32_MAX)(rng);
-
-		sockfdAndPidToAzocket[key] = azocket;
+		AzocketKey key(fd, pid);
+		azocketKeys.insert(key);
+		azocketKeyToAzocket[key] = Azocket(key, STATE_CLOSED);
 	}
 
-	// Return -1 or the created file descriptor.
 	return fd;
 }
 
@@ -73,88 +62,67 @@ void TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int type, int prot
 }
 
 void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int sockfd) {
-	std::pair<int, int> key = {sockfd, pid};
+	AzocketKey key(sockfd, pid);
 
-	if (fds.find(key) == fds.end()) {
-		// If somebody tries to close the socket descriptor which doesn't exist, return -1.
+	if (!azocketKeys.count(key)) {
 		this->returnSystemCall(syscallUUID, -1);
 		return;
 	}
 
-	if (sockfdAndPidToAddrInfo.count(key)) {
-		// If the given socket descriptor was binded - unbind it first.
-		struct sockaddr addr = sockfdAndPidToAddrInfo[key].first;
-
-		// sockfdAndPidToAddrInfo for each socket descriptor (key) stores its binding (value).
-		// To close a socket descriptor we need to remove its binding from
-		// the list of active bindings, which we store in a set (binded).
-		uint16_t port = ntohs(((struct sockaddr_in *) &addr)->sin_port);
-		uint32_t ip = ntohl(((struct sockaddr_in *) &addr)->sin_addr.s_addr);
-		
-		// Remove the (port, ip) binding entry from the set (hash table) of active bindings
-		// and the (socket descriptor, binding) key-value pair from the
-		// sockfdAndPidToAddrInfo hash table.
-		binded.erase({port, ip});
-		sockfdAndPidToAddrInfo.erase(key);
+	if (azocketKeyToAddrInfo.count(key)) {
+		Address address(azocketKeyToAddrInfo[key]);
+		bindedAddresses.erase(address);
+		azocketKeyToAddrInfo.erase(key);
 	}
 
-	// Remove the socket descriptor from the set (hash table) of active socket descriptors.
-	fds.erase(key);
-	sockfdAndPidToAzocket.erase(key);
+	azocketKeys.erase(key);
+	azocketKeyToAzocket.erase(key);
+
 	this->removeFileDescriptor(pid, sockfd);
 	this->returnSystemCall(syscallUUID, 0);
 }
 
 int TCPAssignment::_syscall_bind(int sockfd, int pid, struct sockaddr *addr, socklen_t addrlen) {
-	// We decided to copy the given data (binding), so that
-	// in case if the data in the given pointer is ever
-	// freed without a notice, we'll be safe.
-	struct sockaddr copied_addr = *addr;
+	AddrInfo addr_info(*addr, addrlen);
+	Address address(addr_info);
+	Address address_zero(0U, address.port);
 
-	uint16_t port = ntohs(((struct sockaddr_in *) &copied_addr)->sin_port);
-	uint32_t ip = ntohl(((struct sockaddr_in *) &copied_addr)->sin_addr.s_addr);
+	// std::cout << address.port << " " << address.ip << std::endl;
+	// std::cout << address_zero.port << " " << address_zero.ip << std::endl;
+	// std::cout << bindedAddresses.size() << std::endl;
+	// for (auto it: bindedAddresses) {
+	// 	std::cout << it.ip << " " << it.port << std::endl;
+	// }
+	// std::cout << "Checking for overlap..." << std::endl;
 
-	std::cout << port << " " << ip << std::endl;
-	std::cout << binded.size() << std::endl;
-	for (auto it: binded) {
-		std::cout << it.first << " " << it.second << std::endl;
-	}
-
-	// If the set of active bindings already contains either of the
-	// (port, 0.0.0.0) or (port, ip) pairs, it means that current
-	// binding is not allowed to happen, so return -1.
-	if (binded.find({port, 0}) != binded.end()
-	|| binded.find({port, ip}) != binded.end()) {
-		std::cout << "FOUND!" << std::endl;
+	if (bindedAddresses.count(address_zero) || bindedAddresses.count(address)) {
+		// std::cout << "FOUND OVERLAP!" << std::endl;
 		return -1;
 	}
 
-	std::pair<int, int> key = {sockfd, pid};
+	AzocketKey key(sockfd, pid);
 
-	// If the checks passed, add (socket descriptor, binding) pair into the hash table
-	// and put the binding information into the set (hash table) of active bindings.
-	sockfdAndPidToAddrInfo[key] = {copied_addr, addrlen};
+	azocketKeyToAddrInfo[key] = addr_info;
+	azocketKeyToAzocket[key].addressKey.source = address;
 
-	IPPortToSockfdAndPid[{ip, port}] = {sockfd, pid};
+	bindedAddresses.insert(address);
 
-	binded.insert({port, ip});
+	// std::cout << "Successful binding of " << address.ip << " " << address.port << "\n";
 
-	sockfdAndPidToAzocket[key].source_ip = ip;
-	sockfdAndPidToAzocket[key].source_port = port;
 	return 0;
 }
 
-void TCPAssignment::syscall_bind(
-	UUID syscallUUID, int pid, int sockfd,
-	struct sockaddr *addr, socklen_t addrlen) {
-	// If the socket descriptor does not exist or was already binded, return -1.
-	std::cout << "sockfd = " << sockfd << std::endl; 
-	std::pair<int, int> key = {sockfd, pid};
-	if (!fds.count(key) || sockfdAndPidToAddrInfo.count(key)) {
-		std::cout << "Something wrong here..." << std::endl;
-		std::cout << sockfdAndPidToAddrInfo.count(key) << std::endl;
-		struct sockaddr_in addr = *((struct sockaddr_in *) &sockfdAndPidToAddrInfo[key].first);
-		std::cout << ntohl(addr.sin_addr.s_addr) << " " << ntohs(addr.sin_port) << std::endl;
+void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen) {
+	// std::cout << "sockfd = " << sockfd << std::endl; 
+
+	AzocketKey key(sockfd, pid);
+	if (!azocketKeys.count(key) || azocketKeyToAddrInfo.count(key)) {
+		// std::cout << "Something wrong here..." << std::endl;
+		// std::cout << azocketKeyToAddrInfo.count(key) << std::endl;
+
+		// Address address(azocketKeyToAddrInfo[key]);
+		// std::cout << address.ip << " " << address.port << std::endl;
+
 		this->returnSystemCall(syscallUUID, -1);
 		return;
 	}
@@ -162,27 +130,24 @@ void TCPAssignment::syscall_bind(
 	this->returnSystemCall(syscallUUID, _syscall_bind(sockfd, pid, addr, addrlen));
 }
 
-void TCPAssignment::syscall_getsockname(
-	UUID syscallUUID, int pid, int sockfd,
-	struct sockaddr *addr, socklen_t* addrlen) {
-	// If the socket descriptor does not exist or was not binded, return -1.
-	std::pair<int, int> key = {sockfd, pid};
-	if (!fds.count(key) || !sockfdAndPidToAddrInfo.count(key)) {
+void TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t* addrlen) {
+	AzocketKey key(sockfd, pid);
+
+	if (!azocketKeys.count(key) || !azocketKeyToAddrInfo.count(key)) {
 		this->returnSystemCall(syscallUUID, -1);
 		return;
 	}
 
-	// Fill the content of the given pointers with information
-	// from the sockfdAndPidToAddrInfo hash table.
-	*addr = sockfdAndPidToAddrInfo[key].first;
-	*addrlen = sockfdAndPidToAddrInfo[key].second;
+	*addr = azocketKeyToAddrInfo[key].addr;
+	*addrlen = azocketKeyToAddrInfo[key].addrlen;
 
 	this->returnSystemCall(syscallUUID, 0);
 }
 
 void TCPAssignment::implicit_bind(int sockfd, int pid, uint32_t dest_ip) {
 	std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-	uint16_t local_port = std::uniform_int_distribution<uint16_t>(1025, 65535)(rng);
+	uint16_t local_port = std::uniform_int_distribution<uint16_t>(1025, UINT16_MAX)(rng);
+	
 	uint8_t *dest_ip_by_8 = (uint8_t *) malloc(sizeof(uint32_t));
 
 	dest_ip_by_8[0] = (dest_ip >> 0) & 0xff;
@@ -199,124 +164,134 @@ void TCPAssignment::implicit_bind(int sockfd, int pid, uint32_t dest_ip) {
 		+ (local_ip_by_8[2] << 16)
 		+ (local_ip_by_8[3] << 24));
 
-	local_ip = htonl(local_ip);
-	local_port = htons(local_port);
-	
-	struct sockaddr_in buf;
-	buf.sin_family = AF_INET;
-	buf.sin_addr.s_addr = local_ip;
-	buf.sin_port = local_port;
-	
-	struct sockaddr *local_addr = (struct sockaddr *) &buf;
-	socklen_t local_addrlen = sizeof(*local_addr);
+	// std::cout << "implicit binding to -> " << local_ip << " " << local_port << "\n";
 
-	while (_syscall_bind(sockfd, pid, local_addr, local_addrlen) != 0){
-		local_port = htons(std::uniform_int_distribution<int>(1025, 65535)(rng));
-		buf.sin_port = local_port;
+	AddrInfo addr_info(Address(local_ip, local_port));
+
+	while (_syscall_bind(sockfd, pid, &addr_info.addr, addr_info.addrlen) != 0){
+		local_port = std::uniform_int_distribution<uint16_t>(1025, UINT16_MAX)(rng);
+		addr_info = AddrInfo(Address(local_ip, local_port));
 	}
 }
 
-void TCPAssignment::syscall_connect(
-	UUID syscallUUID,  int pid, int sockfd,
-	struct sockaddr *addr, socklen_t addrlen) {
-	std::pair<int, int> key = {sockfd, pid};
+void TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen) {
+	AzocketKey key(sockfd, pid);
+	// std::cout << "Called connect on (" << key.sockfd << ", " << key.pid << ")\n";
 
-	uint32_t dest_ip = ntohl(((struct sockaddr_in *) addr)->sin_addr.s_addr);
-	uint16_t dest_port = ntohs(((struct sockaddr_in *) addr)->sin_port);
-	implicit_bind(sockfd, pid, dest_ip);
+	Address dest_address(AddrInfo(*addr, addrlen));
+	implicit_bind(sockfd, pid, dest_address.ip);
 
-	sockfdAndPidToAzocket[key].dest_ip = dest_ip;
-	sockfdAndPidToAzocket[key].dest_port = dest_port;
+	AddressKey &address_key = azocketKeyToAzocket[key].addressKey;
+	address_key.dest = dest_address;
 
-	SipDip sipdip = getSipDip(
-		sockfdAndPidToAzocket[key].source_ip, sockfdAndPidToAzocket[key].source_port, 
-		sockfdAndPidToAzocket[key].dest_ip, sockfdAndPidToAzocket[key].dest_port
-	);
-	SipDipToSockfdAndPid[sipdip] = {sockfd, pid};
+	// std::cout << "Implicitly created a socket with AddressKey = ([" << address_key.source.ip << ", " << address_key.source.port << "], [" << address_key.dest.ip << ", " << address_key.dest.port << "])\n";
+	addressKeyToAzocketKey[address_key] = key;
 
-	sendSYNPacket(sockfdAndPidToAzocket[key]);
+	sendSYNPacket(azocketKeyToAzocket[key]);
 
-	sockfdAndPidToAzocket[key].syscall_id = syscallUUID;
-	sockfdAndPidToAzocket[key].state = STATE_SYNSENT;
+	azocketKeyToAzocket[key].syscall_id = syscallUUID;
+	azocketKeyToAzocket[key].state = STATE_SYNSENT;
+
+	// std::cout << "SYNSENT from " << address_key.source.ip << " to " << address_key.dest.ip << "\n";
 }
 
 void TCPAssignment::syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog) {
-	std::pair<int, int> key = {sockfd, pid};
-	sockfdAndPidToAzocket[key].backlog = backlog;
-	sockfdAndPidToAzocket[key].state = STATE_LISTEN;
+	AzocketKey key(sockfd, pid);
+	Azocket &azocket = azocketKeyToAzocket[key];
+
+	azocket.listenControl.backlog = backlog;
+	azocket.state = STATE_LISTEN;
+
+	listenAddressToAzocketKey[azocket.addressKey.source] = key;
+
+	// std::cout << "Listening on (" << sockfd << ", " << pid << "; ip = " << azocket.addressKey.source.ip << ", port = " << azocket.addressKey.source.port << ") with backlog = " << backlog << "\n";
+	// std::cout << "No remote address should be set, checking: (" << azocket.addressKey.dest.ip << ", " << azocket.addressKey.dest.port << ")\n";
+
 	this->returnSystemCall(syscallUUID, 0);
 }
 
-void TCPAssignment::syscall_accept(
-	UUID syscallUUID, int pid, int sockfd, 
-	struct sockaddr *addr, socklen_t *addrlen) {
-	std::pair<int, int> key = {sockfd, pid};
+void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
+	AzocketKey key(sockfd, pid);
+	Azocket &azocket = azocketKeyToAzocket[key];
 
-	// return estab connections if there is one
-	std::vector<int> &child_sockfds = sockfdAndPidToAzocket[key].child_sockfds;	
+	if (azocket.state != STATE_LISTEN) {
+		this->returnSystemCall(syscallUUID, -1);
+		return;
+	}
+
+	// std::cout << "Accept called for " << sockfd << ", " << pid << std::endl;
+
+	std::vector<int> &child_sockfds = azocket.listenControl.child_sockfds;
 	auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [&](int child_sockfd) {
-		std::pair<int, int> child_key = {child_sockfd, pid};
-		return sockfdAndPidToAzocket[child_key].state == STATE_ESTAB;
+		AzocketKey child_key(child_sockfd, pid);
+		return azocketKeyToAzocket[child_key].state == STATE_ESTAB;
 	});
 	if (it != child_sockfds.end()) {
 		int child_sockfd = *it;
 		child_sockfds.erase(it);
+
 		_syscall_getpeername(child_sockfd, pid, addr, addrlen);
+
+		sockaddr_in addr_in = *((sockaddr_in *) addr);
+		// std::cout << "(1) Triple checking the address: " << addr_in.sin_addr.s_addr << " " << addr_in.sin_port << "\n";
+		// std::cout << "(2) Triple checking the address: " << ntohl(addr_in.sin_addr.s_addr) << " " << ntohs(addr_in.sin_port) << "\n";
+
+		Address address(AddrInfo(*addr, *addrlen));
+		// std::cout << "(3) Triple checking the address -> " << address.ip << " " << address.port << "\n";
+
+		// std::cout << "Accept returns " << child_sockfd << "\n";
 		this->returnSystemCall(syscallUUID, child_sockfd);
 		return;
 	}
 
-	// memorize the add and addrlen, then in ACK set them before returning
-	sockfdAndPidToAzocket[key].accept_addr = addr;
-	sockfdAndPidToAzocket[key].accept_addrlen = addrlen;
-	sockfdAndPidToAzocket[key].accept_blocked = true;
-	sockfdAndPidToAzocket[key].accept_syscall_id = syscallUUID;
+	// std::cout << "Accept blocked\n";
+	azocket.acceptControl.addr = addr;
+	azocket.acceptControl.addrlen = addrlen;
+	azocket.acceptControl.blocked = true;
+	azocket.acceptControl.syscall_id = syscallUUID;
 }
 
 void TCPAssignment::_syscall_getpeername(int sockfd, int pid, struct sockaddr *addr, socklen_t* addrlen) {
-	std::pair<int, int> key = {sockfd, pid};
+	AzocketKey key(sockfd, pid);
+	
+	Address &dest = azocketKeyToAzocket[key].addressKey.dest;
+	// std::cout << "For " << sockfd << ", " << pid << " dest is " << dest.ip << ", " << dest.port << std::endl;
 
-	struct sockaddr_in buf;
-	buf.sin_family = AF_INET;
-	buf.sin_addr.s_addr = htonl(sockfdAndPidToAzocket[key].dest_ip);
-	buf.sin_port = htons(sockfdAndPidToAzocket[key].dest_port);
-
-	*addr = *((struct sockaddr *) &buf);
-	*addrlen = sizeof(*addr);
+	AddrInfo addr_info(dest);
+	*addr = addr_info.addr;
+	*addrlen = addr_info.addrlen;
 }
 
-void TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd, 
-	struct sockaddr *addr, socklen_t* addrlen) {
+void TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t* addrlen) {
 	_syscall_getpeername(sockfd, pid, addr, addrlen);
 	this->returnSystemCall(syscallUUID, 0);
 }
 
 Packet* TCPAssignment::makePacket(struct Azocket &azocket, PacketType type) {
-	// 14 - Ethernet header
-	// 20 - IP header structure
-
-	// azocket.seq_num++;
+	// std::cout << "Making packet of type " << type;
+	// std::cout << " and sending from " << azocket.addressKey.source.ip << " " << azocket.addressKey.source.port;
+	// std::cout << " to " << azocket.addressKey.dest.ip << " " << azocket.addressKey.dest.port << "\n";
 
 	Packet *packet = this->allocatePacket(54);
 
-	uint32_t source_ip = htonl(azocket.source_ip);
-	uint16_t source_port = htons(azocket.source_port);
-	uint32_t dest_ip = htonl(azocket.dest_ip);
-	uint16_t dest_port = htons(azocket.dest_port);
+	AddressKey address_key = azocket.addressKey;
+	address_key.toNetwork();
+
+	azocket.seq_num++;
 	uint32_t seq_num = htonl(azocket.seq_num);
+
+	uint16_t total_length = htons(20);
+	packet->writeData(14 + 2, &total_length, 2);
 
 	if (type != SYN) {
 		uint32_t ack_num = htonl(azocket.ack_num);
 		packet->writeData(14 + 20 + 8, &ack_num, 4);
 	}
 
-	uint16_t total_length = htons(20);
-	packet->writeData(14 + 2, &total_length, 2);
-
-	packet->writeData(14 + 12, &source_ip, 4);
-	packet->writeData(14 + 16, &dest_ip, 4);
-	packet->writeData(14 + 20 + 0, &source_port, 2);
-	packet->writeData(14 + 20 + 2, &dest_port, 2);
+	packet->writeData(14 + 12, &address_key.source.ip, 4);
+	packet->writeData(14 + 16, &address_key.dest.ip, 4);
+	packet->writeData(14 + 20 + 0, &address_key.source.port, 2);
+	packet->writeData(14 + 20 + 2, &address_key.dest.port, 2);
 	packet->writeData(14 + 20 + 4, &seq_num, 4);
 
 	uint8_t data_offset = 5 << 4;
@@ -332,7 +307,7 @@ Packet* TCPAssignment::makePacket(struct Azocket &azocket, PacketType type) {
 	uint8_t *tcp_seg = (uint8_t *) malloc(tcp_len);
 	packet->readData(14 + 20, tcp_seg, tcp_len);
 
-	uint16_t checksum = htons(~NetworkUtil::tcp_sum(source_ip, dest_ip, tcp_seg, tcp_len));
+	uint16_t checksum = htons(~NetworkUtil::tcp_sum(address_key.source.ip, address_key.dest.ip, tcp_seg, tcp_len));
 	packet->writeData(14 + 20 + 16, &checksum, 2);
 
 	return packet;
@@ -364,13 +339,13 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 		this->syscall_close(syscallUUID, pid, param.param1_int);
 		break;
 	case READ:
-		//this->syscall_read(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
+		// this->syscall_read(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
 		break;
 	case WRITE:
-		//this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
+		// this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
 		break;
 	case CONNECT:
-		 this->syscall_connect(syscallUUID, pid, param.param1_int,
+		this->syscall_connect(syscallUUID, pid, param.param1_int,
 		 		static_cast<struct sockaddr*>(param.param2_ptr), (socklen_t)param.param3_int);
 		break;
 	case LISTEN:
@@ -401,151 +376,143 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 	}
 }
 
-uint8_t TCPAssignment::getFlags(Packet *packet) {
+void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 	uint8_t flags = 0;
 	packet->readData(14 + 20 + 13, &flags, 1);
-	return flags;
-}
 
-TCPAssignment::SipDip TCPAssignment::getSipDip(uint32_t source_ip, uint16_t source_port, uint32_t dest_ip, uint16_t dest_port) {
-	return SipDip(source_ip, source_port, dest_ip, dest_port);
-}
-
-void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
-	uint8_t flags = getFlags(packet);
-
-	uint32_t source_ip = 0;
-	uint16_t source_port = 0;
-	uint32_t dest_ip = 0;
-	uint16_t dest_port = 0;
+	AddressKey address_key;
 	uint32_t seq_num = 0;
 	uint32_t ack_num = 0;
 
-	packet->readData(14 + 12, &source_ip, 4);
-	packet->readData(14 + 16, &dest_ip, 4);
-	packet->readData(14 + 20 + 0, &source_port, 2);
-	packet->readData(14 + 20 + 2, &dest_port, 2);
+	packet->readData(14 + 12, &address_key.dest.ip, 4);
+	packet->readData(14 + 16, &address_key.source.ip, 4);
+	packet->readData(14 + 20 + 0, &address_key.dest.port, 2);
+	packet->readData(14 + 20 + 2, &address_key.source.port, 2);
 	packet->readData(14 + 20 + 4, &seq_num, 4);
 	packet->readData(14 + 20 + 8, &ack_num, 4);
 
 	freePacket(packet);
 
-	source_ip = ntohl(source_ip);
-	source_port = ntohs(source_port);
-	dest_ip = ntohl(dest_ip);
-	dest_port = ntohs(dest_port);
+	address_key.toHost();
 	seq_num = ntohl(seq_num);
 	ack_num = ntohl(ack_num);
 
-	int sockfd;
-	int pid;
+	// std::cout << "Packet came to me (" << address_key.source.ip << ", " << address_key.source.port << ") from (" << address_key.dest.ip << ", " << address_key.dest.port << ")\n";
 
-	SipDip sipdip;
-
-	switch ((uint16_t) flags) {
+	switch (flags) {
 		case PacketType::FIN: {
+			std::cout << "FIN packet" << std::endl;
 			break;
 		}
-		case PacketType::SYN: { // server accepts connection
-			std::tie(sockfd, pid) = IPPortToSockfdAndPid[{dest_ip, dest_port}];
-			std::pair<int, int> key = {sockfd, pid};
+		case PacketType::FINACK: {
+			std::cout << "FINACK packet" << std::endl;
+			break;
+		}
+		case PacketType::SYN: {
+			Address source = address_key.source;
+			Address source_zero = source;
+			source_zero.ip = 0;
 
-			if (sockfdAndPidToAzocket[key].state != STATE_LISTEN) {
+			// std::cout << "source vs source_zero: " << listenAddressToAzocketKey.count(source) << " " << listenAddressToAzocketKey.count(source_zero) << std::endl;
+
+			AzocketKey &key = listenAddressToAzocketKey.count(source_zero) ? listenAddressToAzocketKey[source_zero] : listenAddressToAzocketKey[source]; // assumption that such listening socket exists
+			Azocket &azocket = azocketKeyToAzocket[key];
+
+			// std::cout << "SYN: " << key.sockfd << " " << key.pid << " " << azocket.listenControl.backlog << std::endl;
+
+			if (azocket.state != STATE_LISTEN) {
+				// std::cout << "SYN Packet Denied\n";
+				break;
+			}
+			if (azocket.listenControl.backlog == 0){
+				// std::cout << "SYN Packet Denied\n";
 				break;
 			}
 
-			std::cout << "SYN: " << sockfd << " " << pid << " " << sockfdAndPidToAzocket[key].backlog << std::endl;
+			int new_sockfd = _syscall_socket(key.pid);
+			azocket.listenControl.child_sockfds.push_back(new_sockfd);
+			azocket.listenControl.backlog--;
 
-			if (sockfdAndPidToAzocket[key].backlog == 0){
-				break;
-			}
+			AzocketKey new_key = {new_sockfd, key.pid};
+			Azocket &new_azocket = azocketKeyToAzocket[new_key];
+			AddressKey &new_address_key = new_azocket.addressKey;
 
-			int new_sockfd = _syscall_socket(pid);
-			sockfdAndPidToAzocket[key].child_sockfds.push_back(new_sockfd);
-			sockfdAndPidToAzocket[key].backlog--;
+			new_azocket.listenControl.parent_sockfd = key.sockfd;
+			new_address_key = address_key;
+			new_azocket.ack_num = seq_num + 1;
 
-			std::pair<int, int> new_key = {new_sockfd, pid};
-			sockfdAndPidToAzocket[new_key].parent_sockfd = sockfd;
+			azocketKeyToAddrInfo[new_key] = AddrInfo(address_key.source);
 
-			sockfdAndPidToAzocket[new_key].source_ip = dest_ip;
-			sockfdAndPidToAzocket[new_key].source_port = dest_port;
-			sockfdAndPidToAzocket[new_key].dest_ip = source_ip;
-			sockfdAndPidToAzocket[new_key].dest_port = source_port;
-			sockfdAndPidToAzocket[new_key].ack_num = seq_num + 1;
-			
-			struct sockaddr_in addr;
-			addr.sin_family = AF_INET;
-			addr.sin_addr.s_addr = htonl(dest_ip);
-			addr.sin_port = htons(dest_port);
-			socklen_t addrlen = sizeof(addr);
-			sockfdAndPidToAddrInfo[new_key] = {*((struct sockaddr *) &addr), addrlen};
+			// std::cout << "SYN: " << seq_num << " " << ack_num << " " << new_azocket.seq_num << "\n";
 
-			// std::cout << "SYN: " << seq_num << " " << ack_num << " " << sockfdAndPidToAzocket[sockfd].seq_num << "\n";
+			addressKeyToAzocketKey[new_address_key] = new_key;
+			sendSYNACKPacket(new_azocket);
 
-			sipdip = getSipDip(dest_ip, dest_port, source_ip, source_port);
-			SipDipToSockfdAndPid[sipdip] = new_key;
-			
-			sendSYNACKPacket(sockfdAndPidToAzocket[new_key]);
-
-			sockfdAndPidToAzocket[new_key].state = STATE_SYN_RCVD;
+			new_azocket.state = STATE_SYN_RCVD;
 			break;
 		}
-		case PacketType::SYNACK: { // client established connection
-			sipdip = getSipDip(dest_ip, dest_port, source_ip, source_port);
-			std::tie(sockfd, pid) = SipDipToSockfdAndPid[sipdip];
-			std::pair<int, int> key = {sockfd, pid};
+		case PacketType::SYNACK: { // we need retransmission here in the future
+			AzocketKey &key = addressKeyToAzocketKey[address_key];
+			Azocket &azocket = azocketKeyToAzocket[key];
 
-			// std::cout << "SYNACK: " << sockfd << " " << ack_num << " " << sockfdAndPidToAzocket[sockfd].seq_num << "\n";
-			if (ack_num != sockfdAndPidToAzocket[key].seq_num + 1) {
+			// std::cout << "SYNACK: " << key.sockfd << " " << ack_num << " " << azocketKeyToAzocket[key].seq_num << "\n";
+			if (ack_num != azocket.seq_num + 1) {
 				// Not doing this call below because it could be just erroneous packet...
 				// Hope that the destination host will send us the right packet.
-				// this->returnSystemCall(sockfdAndPidToAzocket[sockfd].syscall_id, -1);
+				// this->returnSystemCall(azocketKeyToAzocket[sockfd].syscall_id, -1);
+				// std::cout << "SYNACK Packet Denied\n";
 				break;
 			}
 			
-			sockfdAndPidToAzocket[key].ack_num = seq_num + 1;
-			sendACKPacket(sockfdAndPidToAzocket[key]);
+			azocket.ack_num = seq_num + 1;
+			sendACKPacket(azocket);
 
-			sockfdAndPidToAzocket[key].state = STATE_ESTAB;
-			this->returnSystemCall(sockfdAndPidToAzocket[key].syscall_id, 0);
+			azocket.state = STATE_ESTAB;
+
+			this->returnSystemCall(azocket.syscall_id, 0);
 			break;
 		}
-		case PacketType::ACK: { // server receives ACK
-			sipdip = getSipDip(dest_ip, dest_port, source_ip, source_port);
-			std::tie(sockfd, pid) = SipDipToSockfdAndPid[sipdip];
-			std::pair<int, int> key = {sockfd, pid};
+		case PacketType::ACK: {
+			AzocketKey &key = addressKeyToAzocketKey[address_key];
+			Azocket &azocket = azocketKeyToAzocket[key];
 
-			// std::cout << "ACK: " << sockfd << " " << ack_num << " " << sockfdAndPidToAzocket[sockfd].seq_num << "\n";
-			if (ack_num != sockfdAndPidToAzocket[key].seq_num + 1) {
+			// std::cout << "ACK: " << key.sockfd << " " << ack_num << " " << azocketKeyToAzocket[key].seq_num << "\n";
+			if (ack_num != azocket.seq_num + 1) {
 				// Not doing this call below because it could be just erroneous packet...
 				// Hope that the destination host will send us the right packet.
-				// this->returnSystemCall(sockfdAndPidToAzocket[sockfd].syscall_id, -1);
+				// this->returnSystemCall(azocketKeyToAzocket[sockfd].syscall_id, -1);
+				// std::cout << "ACK Packet Denied\n";
 				break;
 			}
-			
-			sockfdAndPidToAzocket[key].state = STATE_ESTAB;
-			
-			int parent_sockfd = sockfdAndPidToAzocket[key].parent_sockfd;
-			std::pair<int, int> parent_key = {parent_sockfd, pid};
-			sockfdAndPidToAzocket[parent_key].backlog++;
 
-			std::cout << "ACK: " << parent_sockfd << " " << pid << " " << sockfdAndPidToAzocket[parent_key].backlog << std::endl;
+			azocket.state = STATE_ESTAB;
 
-			if (sockfdAndPidToAzocket[parent_key].accept_blocked){
-				std::vector<int> &child_sockfds = sockfdAndPidToAzocket[parent_key].child_sockfds;
+			int parent_sockfd = azocket.listenControl.parent_sockfd;
+			AzocketKey parent_key = {parent_sockfd, key.pid};
+			Azocket &parent_azocket = azocketKeyToAzocket[parent_key];
+			parent_azocket.listenControl.backlog++;
+
+			// std::cout << "ACK: " << parent_sockfd << " " << key.pid << " " << parent_azocket.listenControl.backlog << std::endl;
+
+			if (parent_azocket.acceptControl.blocked) {
+				std::vector<int> &child_sockfds = parent_azocket.listenControl.child_sockfds;
 				auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [&](const int &child_sockfd) {
-					return child_sockfd == sockfd;
+					return child_sockfd == key.sockfd;
 				});
 				child_sockfds.erase(it);
 
-				_syscall_getpeername(sockfd, pid,
-					sockfdAndPidToAzocket[parent_key].accept_addr, 
-					sockfdAndPidToAzocket[parent_key].accept_addrlen
+				_syscall_getpeername(key.sockfd, key.pid,
+					parent_azocket.acceptControl.addr,
+					parent_azocket.acceptControl.addrlen
 				);
-				sockfdAndPidToAzocket[parent_key].accept_blocked = false;
-				this->returnSystemCall(sockfdAndPidToAzocket[parent_key].accept_syscall_id, sockfd);
+				parent_azocket.acceptControl.blocked = false;
+				this->returnSystemCall(parent_azocket.acceptControl.syscall_id, key.sockfd);
 			}
 
+			break;
+		}
+		default: {
+			std::cout << "Some other type of packet" << std::endl;
 			break;
 		}
 	}

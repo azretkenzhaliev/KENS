@@ -25,8 +25,6 @@ namespace E
 class TCPAssignment : public HostModule, public NetworkModule, public SystemCallInterface, private NetworkLog, private TimerModule
 {
 private:
-
-private:
 	virtual void timerCallback(void* payload) final;
 public:
 	TCPAssignment(Host* host);
@@ -34,21 +32,17 @@ public:
 	virtual void finalize();
 	virtual ~TCPAssignment();
 protected:
-		// fds is a hash table for the active file descriptors.
-	std::unordered_set<std::pair<int, int>> fds;
+	struct Address;
+	struct AddressKey;
+	struct AddrInfo;
+	struct ListenController;
+	struct AcceptController;
+	struct AzocketKey;
+	struct Azocket;
+	struct AddressHash;
+	struct AddressKeyHash;
+	struct AzocketKeyHash;
 
-	// sockfdAndPidToAddrInfo is a hash table, which contains
-	// (socket descriptor, (port/ip info, length of info in bytes)).
-	// It is the main data structure used for the effective
-	// socket descriptor <-> port/ip translation.
-	std::unordered_map<std::pair<int, int>, std::pair<struct sockaddr, socklen_t>> sockfdAndPidToAddrInfo;
-	
-	std::unordered_map<std::pair<uint32_t, uint16_t>, std::pair<int, int>> IPPortToSockfdAndPid;
-
-	// binded is a hash table, which stores the active port/ip bindings.
-	// It is the main data structure used for binding collision checking.
-	std::unordered_set<std::pair<uint16_t, uint32_t>> binded;
-		
 	enum AzocketState : uint8_t {
 		STATE_CLOSED,
 		STATE_LISTEN,
@@ -56,64 +50,6 @@ protected:
 		STATE_SYN_RCVD,
 		STATE_ESTAB
 	};
-
-	struct Azocket {
-		uint32_t source_ip;
-		uint16_t source_port;
-		uint32_t dest_ip;
-		uint16_t dest_port;
-
-		int pid;
-		int syscall_id;
-		int sockfd;
-
-		uint32_t seq_num;
-		uint32_t ack_num;
-
-		int backlog;
-
-		std::vector<int> child_sockfds;
-		int parent_sockfd;
-		bool accept_blocked;
-		UUID accept_syscall_id;
-		struct sockaddr *accept_addr;
-		socklen_t *accept_addrlen;
-		
-		AzocketState state;
-
-		Azocket() : backlog(0), accept_blocked(false), state(STATE_CLOSED) {}
-	};
-
-	// map: int, int (sockfd, pid) -> Azocket
-	std::unordered_map<std::pair<int, int>, struct Azocket> sockfdAndPidToAzocket;
-
-	struct SipDip {
-		uint32_t source_ip;
-		uint16_t source_port;
-		uint32_t dest_ip;
-		uint16_t dest_port;
-
-		SipDip() {
-			source_ip = source_port = 0;
-			dest_ip = dest_port = 0;
-		}
-		SipDip(uint32_t _source_ip, uint16_t _source_port, uint32_t _dest_ip, uint16_t _dest_port) {
-			source_ip = _source_ip;
-			source_port = _source_port;
-			dest_ip = _dest_ip;
-			dest_port = _dest_port;
-		}
-
-		friend const bool operator < (const SipDip &f, const SipDip &s) {
-			return f.source_ip < s.source_ip
-			|| (f.source_ip == s.source_ip && f.source_port < s.source_port)
-			|| (f.source_ip == s.source_ip && f.source_port == s.source_port && f.dest_ip < s.dest_ip)
-			|| (f.source_ip == s.source_ip && f.source_port == s.source_port && f.dest_ip == s.dest_ip && f.dest_port < s.dest_port);
-		}
-	};
-	
-	// map: SipDip -> sockfd, pid
-	std::map<struct SipDip, std::pair<int, int>> SipDipToSockfdAndPid;
 
 	enum PacketFlag : uint8_t {
 		FLAG_FIN,
@@ -127,11 +63,208 @@ protected:
 	};
 
 	enum PacketType : uint8_t {
-		FIN = (1 << PacketFlag::FLAG_FIN),
-		SYN = (1 << PacketFlag::FLAG_SYN),
-		SYNACK = (1 << PacketFlag::FLAG_SYN) | (1 << PacketFlag::FLAG_ACK),
-		ACK = (1 << PacketFlag::FLAG_ACK)
+		FIN = (1 << PacketFlag::FLAG_FIN), // 1
+		SYN = (1 << PacketFlag::FLAG_SYN), // 2
+		ACK = (1 << PacketFlag::FLAG_ACK), // 16
+		FINACK = (1 << PacketFlag::FLAG_FIN) | (1 << PacketFlag::FLAG_ACK), // 17
+		SYNACK = (1 << PacketFlag::FLAG_SYN) | (1 << PacketFlag::FLAG_ACK)  // 18
 	};
+
+	struct Address {
+		uint32_t ip;
+		uint16_t port;
+
+		Address() : ip(0), port(0) {}
+		Address(uint32_t ip) : ip(ip) {
+			std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
+			port = std::uniform_int_distribution<uint16_t>(1025, UINT16_MAX)(rng);
+		}
+		Address(uint32_t ip, uint16_t port) : ip(ip), port(port) {}
+		Address(uint16_t port, uint32_t ip) : ip(ip), port(port) {}
+		Address(const AddrInfo &addrInfo) {
+			sockaddr_in addr = *((sockaddr_in *) &addrInfo.addr);
+			ip = ntohl(addr.sin_addr.s_addr);
+			port = ntohs(addr.sin_port);
+		}
+
+		friend bool operator < (const Address &f, const Address &s) {
+			return f.ip < s.ip || (f.ip == s.ip && f.port < s.port);
+		}
+		friend bool operator == (const Address &f, const Address &s) {
+			return f.ip == s.ip && f.port == s.port;
+		}
+
+		void toNetwork() {
+			ip = htonl(ip);
+			port = htons(port);
+		}
+
+		void toHost() {
+			// std::cout << "Before: " << ip << ", " << port << "\n";
+
+			ip = ntohl(ip);
+			port = ntohs(port);
+
+			// std::cout << "After: " << ip << ", " << port << "\n";
+		}
+
+		AddrInfo getAddrInfo() const {
+			return AddrInfo(*this);
+		}
+	};
+
+	struct AddressKey {
+		Address source;
+		Address dest;
+
+		AddressKey() {}
+		AddressKey(const Address &source) : source(source) {}
+		AddressKey(const Address &source, const Address &dest) : source(source), dest(dest) {}
+
+		friend const bool operator < (const AddressKey &f, const AddressKey &s) {
+			return f.source < s.source || (f.source == s.source && f.dest < s.dest);
+		}
+		friend const bool operator == (const AddressKey &f, const AddressKey &s) {
+			return f.source == s.source && f.dest == s.dest;
+		}
+
+		void toNetwork() {
+			source.toNetwork();
+			dest.toNetwork();
+		}
+
+		void toHost() {
+			// std::cout << "Changing source...\n";
+			source.toHost();
+
+			// std::cout << "Changing dest...\n";
+			dest.toHost();
+		}
+	};
+
+	struct AddrInfo {
+		sockaddr addr;
+		socklen_t addrlen;
+
+		AddrInfo() {}
+		AddrInfo(sockaddr addr, socklen_t addrlen) : addr(addr), addrlen(addrlen) {}
+		AddrInfo(const Address &address) {
+			sockaddr_in addr_in;
+			addr_in.sin_family = AF_INET;
+			addr_in.sin_addr.s_addr = htonl(address.ip);
+			addr_in.sin_port = htons(address.port);
+
+			addr = *((sockaddr *) &addr_in);
+			addrlen = sizeof(addr);
+		}
+
+		Address getAddress() const {
+			return Address(*this);
+		}
+	};
+
+	struct ListenController {
+		int backlog;
+		int parent_sockfd;
+		std::vector<int> child_sockfds;
+
+		ListenController() : backlog(0) {}
+	};
+
+	struct AcceptController {
+		bool blocked;
+		UUID syscall_id;
+		sockaddr *addr;
+		socklen_t *addrlen;
+
+		AcceptController() : blocked(false) {}
+	};
+
+	struct AzocketKey {
+		int sockfd;
+		int pid;
+
+		AzocketKey() : sockfd(-1), pid(-1) {}
+		AzocketKey(int sockfd, int pid) : sockfd(sockfd), pid(pid) {}
+
+		friend bool operator == (const AzocketKey &f, const AzocketKey &s) {
+			return f.sockfd == s.sockfd && f.pid == s.pid;
+		}
+	};
+
+	struct Azocket {
+		AddressKey addressKey;
+
+		AzocketKey key;
+		UUID syscall_id;
+
+		uint32_t seq_num;
+		uint32_t ack_num;
+
+		ListenController listenControl;
+		AcceptController acceptControl;
+		AzocketState state;
+
+		Azocket() : state(STATE_CLOSED) {}
+		Azocket(const AzocketKey &key, const AzocketState &state) : key(key), state(state) {
+			std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
+			seq_num = std::uniform_int_distribution<uint32_t>(0, UINT32_MAX)(rng);
+		}
+	};
+
+	struct HashTemplates {
+		template <class T>
+		static inline void hash_combine(size_t &seed, const T &value) {
+			std::hash<T> hasher;
+			seed ^= hasher(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+		}
+	};
+
+	struct AddressHash {
+		static size_t hash(const Address &address) {
+			size_t hash = 0;
+			HashTemplates::hash_combine(hash, address.ip);
+			HashTemplates::hash_combine(hash, address.port);
+			return hash;
+		}
+		size_t operator () (const Address &address) const {
+			return hash(address);
+		}
+	};
+
+	struct AddressKeyHash {
+		static size_t hash(const AddressKey &addressKey) {
+			size_t hash_source = AddressHash::hash(addressKey.source);
+			size_t hash_dest = AddressHash::hash(addressKey.dest);
+
+			size_t hash = 0;
+			HashTemplates::hash_combine(hash, hash_source);
+			HashTemplates::hash_combine(hash, hash_dest);
+			return hash;
+		}
+		size_t operator () (const AddressKey &addressKey) const {
+			return hash(addressKey);
+		}
+	};
+
+	struct AzocketKeyHash {
+		static size_t hash(const AzocketKey &azocketKey) {
+			size_t hash = 0;
+			HashTemplates::hash_combine(hash, azocketKey.sockfd);
+			HashTemplates::hash_combine(hash, azocketKey.pid);
+			return hash;
+		}
+		size_t operator () (const AzocketKey &azocketKey) const {
+			return hash(azocketKey);
+		}
+	};
+
+	std::map<AddressKey, AzocketKey> addressKeyToAzocketKey;
+	std::unordered_map<AzocketKey, AddrInfo, AzocketKeyHash> azocketKeyToAddrInfo;
+	std::unordered_map<Address, AzocketKey, AddressHash> listenAddressToAzocketKey;
+	std::unordered_map<AzocketKey, Azocket, AzocketKeyHash> azocketKeyToAzocket;
+	std::unordered_set<AzocketKey, AzocketKeyHash> azocketKeys;
+	std::unordered_set<Address, AddressHash> bindedAddresses;
 
 	virtual int _syscall_socket(int pid) final;
 	virtual void syscall_socket(UUID syscallUUID, int pid, int type, int protocol) final;
@@ -142,18 +275,16 @@ protected:
 	virtual void syscall_connect(UUID syscallUUID,  int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen) final;
 	virtual void syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog) final;
 	virtual void syscall_accept(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen) final;
-	virtual void syscall_getpeername(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t* addrlen) final;
 	virtual void _syscall_getpeername(int sockfd, int pid, struct sockaddr *addr, socklen_t* addrlen) final;
+	virtual void syscall_getpeername(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t* addrlen) final;
 	virtual void systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param) final;
 	virtual void packetArrived(std::string fromModule, Packet* packet) final;
 
 	virtual void implicit_bind(int sockfd, int pid, uint32_t dest_ip) final;
-	virtual uint8_t getFlags(Packet *packet) final;
 	virtual Packet* makePacket(struct Azocket &azocket, PacketType type) final;
 	virtual void sendSYNPacket(struct Azocket &azocket) final;	
 	virtual void sendSYNACKPacket(struct Azocket &azocket) final;
 	virtual void sendACKPacket(struct Azocket &azocket) final;
-	virtual SipDip getSipDip(uint32_t source_ip, uint16_t source_port, uint32_t dest_ip, uint16_t dest_port) final;
 };
 
 class TCPAssignmentProvider
