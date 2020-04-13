@@ -164,7 +164,7 @@ void TCPAssignment::implicit_bind(int sockfd, int pid, uint32_t dest_ip) {
 		+ (local_ip_by_8[2] << 16)
 		+ (local_ip_by_8[3] << 24));
 
-	// std::cout << "implicit binding to -> " << local_ip << " " << local_port << "\n";
+	std::cout << "implicit binding to -> " << local_ip << " " << local_port << "\n";
 
 	AddrInfo addr_info(Address(local_ip, local_port));
 
@@ -179,7 +179,9 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, struc
 	// std::cout << "Called connect on (" << key.sockfd << ", " << key.pid << ")\n";
 
 	Address dest_address(AddrInfo(*addr, addrlen));
-	implicit_bind(sockfd, pid, dest_address.ip);
+	if (!azocketKeyToAddrInfo.count(key)){
+		implicit_bind(sockfd, pid, dest_address.ip);
+	}
 
 	AddressKey &address_key = azocketKeyToAzocket[key].addressKey;
 	address_key.dest = dest_address;
@@ -277,7 +279,7 @@ Packet* TCPAssignment::makePacket(struct Azocket &azocket, PacketType type) {
 	AddressKey address_key = azocket.addressKey;
 	address_key.toNetwork();
 
-	azocket.seq_num++;
+	// azocket.seq_num++;
 	uint32_t seq_num = htonl(azocket.seq_num);
 
 	uint16_t total_length = htons(20);
@@ -401,11 +403,11 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 
 	switch (flags) {
 		case PacketType::FIN: {
-			std::cout << "FIN packet" << std::endl;
+			// std::cout << "FIN packet" << std::endl;
 			break;
 		}
 		case PacketType::FINACK: {
-			std::cout << "FINACK packet" << std::endl;
+			// std::cout << "FINACK packet" << std::endl;
 			break;
 		}
 		case PacketType::SYN: {
@@ -421,8 +423,19 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			// std::cout << "SYN: " << key.sockfd << " " << key.pid << " " << azocket.listenControl.backlog << std::endl;
 
 			if (azocket.state != STATE_LISTEN) {
-				// std::cout << "SYN Packet Denied\n";
+				AzocketKey &key = addressKeyToAzocketKey[address_key];
+				Azocket &azocket = azocketKeyToAzocket[key];
+				AddressKey &new_address_key = azocket.addressKey;
+
+				new_address_key = address_key;
+				azocket.ack_num = seq_num + 1;
+				addressKeyToAzocketKey[address_key] = key;
+				sendSYNACKPacket(azocket);
+				azocket.state = STATE_SYN_RCVD;
 				break;
+
+				// std::cout << "SYN Packet Denied\n";
+				// break;
 			}
 			if (azocket.listenControl.backlog == 0){
 				// std::cout << "SYN Packet Denied\n";
@@ -443,7 +456,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 
 			azocketKeyToAddrInfo[new_key] = AddrInfo(address_key.source);
 
-			// std::cout << "SYN: " << seq_num << " " << ack_num << " " << new_azocket.seq_num << "\n";
+			std::cout << "SYN: " << seq_num << " " << ack_num << " " << new_azocket.seq_num << "\n";
 
 			addressKeyToAzocketKey[new_address_key] = new_key;
 			sendSYNACKPacket(new_azocket);
