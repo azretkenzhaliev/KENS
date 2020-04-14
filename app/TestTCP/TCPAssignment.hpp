@@ -108,6 +108,18 @@ protected:
 			// std::cout << "After: " << ip << ", " << port << "\n";
 		}
 
+		friend std::ostream& operator << (std::ostream& stream, const Address &address) {
+			std::string ip_str = "";
+			uint32_t ip = address.ip;
+			for (int i = 0; i < 4; i++) {
+				ip_str = std::to_string(ip & 0xff) + "." + ip_str; 
+				ip >>= 8;
+			}
+			ip_str.erase(ip_str.size() - 1U);
+			stream << "ip: " << ip_str << ", port: " << address.port;
+			return stream;
+		}
+
 		AddrInfo getAddrInfo() const {
 			return AddrInfo(*this);
 		}

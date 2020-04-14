@@ -91,7 +91,7 @@ int TCPAssignment::_syscall_bind(int sockfd, int pid, struct sockaddr *addr, soc
 	// std::cout << address_zero.port << " " << address_zero.ip << std::endl;
 	// std::cout << bindedAddresses.size() << std::endl;
 	// for (auto it: bindedAddresses) {
-	// 	std::cout << it.ip << " " << it.port << std::endl;
+	// 	// std::cout << it.ip << " " << it.port << std::endl;
 	// }
 	// std::cout << "Checking for overlap..." << std::endl;
 
@@ -120,7 +120,7 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd, struct s
 		// std::cout << "Something wrong here..." << std::endl;
 		// std::cout << azocketKeyToAddrInfo.count(key) << std::endl;
 
-		// Address address(azocketKeyToAddrInfo[key]);
+		Address address(azocketKeyToAddrInfo[key]);
 		// std::cout << address.ip << " " << address.port << std::endl;
 
 		this->returnSystemCall(syscallUUID, -1);
@@ -147,24 +147,15 @@ void TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int sockfd, s
 void TCPAssignment::implicit_bind(int sockfd, int pid, uint32_t dest_ip) {
 	std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
 	uint16_t local_port = std::uniform_int_distribution<uint16_t>(1025, UINT16_MAX)(rng);
-	
-	uint8_t *dest_ip_by_8 = (uint8_t *) malloc(sizeof(uint32_t));
 
-	dest_ip_by_8[0] = (dest_ip >> 0) & 0xff;
-	dest_ip_by_8[1] = (dest_ip >> 8) & 0xff;
-	dest_ip_by_8[2] = (dest_ip >> 16) & 0xff;
-	dest_ip_by_8[3] = (dest_ip >> 24) & 0xff;
+	uint32_t local_ip = 0;
+	int index = this->getHost()->getRoutingTable((uint8_t *) &dest_ip);
+	this->getHost()->getIPAddr((uint8_t *) &local_ip, index);
 
-	uint8_t *local_ip_by_8 = (uint8_t *) malloc(sizeof(uint32_t));
-	int index = this->getHost()->getRoutingTable(dest_ip_by_8);
-	this->getHost()->getIPAddr(local_ip_by_8, index);
+	local_ip = ntohl(local_ip);
 
-	uint32_t local_ip = (local_ip_by_8[0]
-		+ (local_ip_by_8[1] << 8)
-		+ (local_ip_by_8[2] << 16)
-		+ (local_ip_by_8[3] << 24));
-
-	std::cout << "implicit binding to -> " << local_ip << " " << local_port << "\n";
+	// std::cout << "implicit binding to -> " << local_ip << " " << local_port << "\n";
+	// std::cout << Address(local_ip, local_port) << std::endl;
 
 	AddrInfo addr_info(Address(local_ip, local_port));
 
@@ -234,11 +225,11 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int sockfd, struct
 
 		_syscall_getpeername(child_sockfd, pid, addr, addrlen);
 
-		sockaddr_in addr_in = *((sockaddr_in *) addr);
+		// sockaddr_in addr_in = *((sockaddr_in *) addr);
 		// std::cout << "(1) Triple checking the address: " << addr_in.sin_addr.s_addr << " " << addr_in.sin_port << "\n";
 		// std::cout << "(2) Triple checking the address: " << ntohl(addr_in.sin_addr.s_addr) << " " << ntohs(addr_in.sin_port) << "\n";
 
-		Address address(AddrInfo(*addr, *addrlen));
+		// Address address(AddrInfo(*addr, *addrlen));
 		// std::cout << "(3) Triple checking the address -> " << address.ip << " " << address.port << "\n";
 
 		// std::cout << "Accept returns " << child_sockfd << "\n";
@@ -271,15 +262,14 @@ void TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd, s
 
 Packet* TCPAssignment::makePacket(struct Azocket &azocket, PacketType type) {
 	// std::cout << "Making packet of type " << type;
-	// std::cout << " and sending from " << azocket.addressKey.source.ip << " " << azocket.addressKey.source.port;
-	// std::cout << " to " << azocket.addressKey.dest.ip << " " << azocket.addressKey.dest.port << "\n";
+	// std::cout << " and sending from " << azocket.addressKey.source;
+	// std::cout << " to " << azocket.addressKey.dest << "\n";
 
 	Packet *packet = this->allocatePacket(54);
 
 	AddressKey address_key = azocket.addressKey;
 	address_key.toNetwork();
 
-	// azocket.seq_num++;
 	uint32_t seq_num = htonl(azocket.seq_num);
 
 	uint16_t total_length = htons(20);
@@ -456,7 +446,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 
 			azocketKeyToAddrInfo[new_key] = AddrInfo(address_key.source);
 
-			std::cout << "SYN: " << seq_num << " " << ack_num << " " << new_azocket.seq_num << "\n";
+			// std::cout << "SYN: " << seq_num << " " << ack_num << " " << new_azocket.seq_num << "\n";
 
 			addressKeyToAzocketKey[new_address_key] = new_key;
 			sendSYNACKPacket(new_azocket);
@@ -478,6 +468,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			}
 			
 			azocket.ack_num = seq_num + 1;
+			azocket.seq_num++;
 			sendACKPacket(azocket);
 
 			azocket.state = STATE_ESTAB;
@@ -525,7 +516,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			break;
 		}
 		default: {
-			std::cout << "Some other type of packet" << std::endl;
+			// std::cout << "Some other type of packet" << std::endl;
 			break;
 		}
 	}
