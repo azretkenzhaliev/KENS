@@ -294,9 +294,8 @@ protected:
 
 	virtual void implicit_bind(int sockfd, int pid, uint32_t dest_ip) final;
 	virtual Packet* makePacket(struct Azocket &azocket, PacketType type) final;
-	virtual void sendSYNPacket(struct Azocket &azocket) final;	
-	virtual void sendSYNACKPacket(struct Azocket &azocket) final;
-	virtual void sendACKPacket(struct Azocket &azocket) final;
+	virtual void dispatchPacket(struct Azocket &azocket, PacketType type) final;	
+	virtual bool readPacket(Packet *packet, uint8_t &flags, AddressKey &address_key, uint32_t &seq_num, uint32_t &ack_num) final;
 };
 
 class TCPAssignmentProvider
