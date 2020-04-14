@@ -46,8 +46,9 @@ void TCPAssignment::finalize()
 
 int TCPAssignment::_syscall_socket(int pid) {
 	int fd = this->createFileDescriptor(pid);
-	// std::cout << "_syscall_socket -> " << fd << " " << pid << std::endl;
-
+#if 0
+	std::cout << "_syscall_socket -> " << fd << " " << pid << std::endl;
+#endif
 	if (fd != -1) {
 		AzocketKey key(fd, pid);
 		azocketKeys.insert(key);
@@ -87,16 +88,19 @@ int TCPAssignment::_syscall_bind(int sockfd, int pid, struct sockaddr *addr, soc
 	Address address(addr_info);
 	Address address_zero(0U, address.port);
 
-	// std::cout << address.port << " " << address.ip << std::endl;
-	// std::cout << address_zero.port << " " << address_zero.ip << std::endl;
-	// std::cout << bindedAddresses.size() << std::endl;
-	// for (auto it: bindedAddresses) {
-	// 	// std::cout << it.ip << " " << it.port << std::endl;
-	// }
-	// std::cout << "Checking for overlap..." << std::endl;
-
+#if 0
+	std::cout << address.port << " " << address.ip << std::endl;
+	std::cout << address_zero.port << " " << address_zero.ip << std::endl;
+	std::cout << bindedAddresses.size() << std::endl;
+	for (auto it: bindedAddresses) {
+		std::cout << it.ip << " " << it.port << std::endl;
+	}
+	std::cout << "Checking for overlap..." << std::endl;
+#endif
 	if (bindedAddresses.count(address_zero) || bindedAddresses.count(address)) {
-		// std::cout << "FOUND OVERLAP!" << std::endl;
+#if 0
+		std::cout << "FOUND OVERLAP!" << std::endl;
+#endif
 		return -1;
 	}
 
@@ -107,21 +111,24 @@ int TCPAssignment::_syscall_bind(int sockfd, int pid, struct sockaddr *addr, soc
 
 	bindedAddresses.insert(address);
 
-	// std::cout << "Successful binding of " << address.ip << " " << address.port << "\n";
-
+#if 0
+	std::cout << "Successful binding of " << address.ip << " " << address.port << "\n";
+#endif
 	return 0;
 }
 
 void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen) {
-	// std::cout << "sockfd = " << sockfd << std::endl; 
-
+#if 0
+	std::cout << "sockfd = " << sockfd << std::endl; 
+#endif
 	AzocketKey key(sockfd, pid);
 	if (!azocketKeys.count(key) || azocketKeyToAddrInfo.count(key)) {
-		// std::cout << "Something wrong here..." << std::endl;
-		// std::cout << azocketKeyToAddrInfo.count(key) << std::endl;
-
+#if 0
+		std::cout << "Something wrong here..." << std::endl;
+		std::cout << azocketKeyToAddrInfo.count(key) << std::endl;
 		Address address(azocketKeyToAddrInfo[key]);
-		// std::cout << address.ip << " " << address.port << std::endl;
+		std::cout << address.ip << " " << address.port << std::endl;
+#endif
 
 		this->returnSystemCall(syscallUUID, -1);
 		return;
@@ -154,9 +161,10 @@ void TCPAssignment::implicit_bind(int sockfd, int pid, uint32_t dest_ip) {
 
 	local_ip = ntohl(local_ip);
 
-	// std::cout << "implicit binding to -> " << local_ip << " " << local_port << "\n";
-	// std::cout << Address(local_ip, local_port) << std::endl;
-
+#if 0
+	std::cout << "implicit binding to -> " << local_ip << " " << local_port << "\n";
+	std::cout << Address(local_ip, local_port) << std::endl;
+#endif
 	AddrInfo addr_info(Address(local_ip, local_port));
 
 	while (_syscall_bind(sockfd, pid, &addr_info.addr, addr_info.addrlen) != 0){
@@ -168,7 +176,9 @@ void TCPAssignment::implicit_bind(int sockfd, int pid, uint32_t dest_ip) {
 void TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen) {
 	AzocketKey key(sockfd, pid);
 	Azocket &azocket = azocketKeyToAzocket[key];
-	// std::cout << "Called connect on (" << key.sockfd << ", " << key.pid << ")\n";
+#if 0
+	std::cout << "Called connect on (" << key.sockfd << ", " << key.pid << ")\n";
+#endif
 
 	Address dest_address(AddrInfo(*addr, addrlen));
 	if (!azocketKeyToAddrInfo.count(key)){
@@ -178,7 +188,9 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, struc
 	AddressKey &address_key = azocket.addressKey;
 	address_key.dest = dest_address;
 
-	// std::cout << "Implicitly created a socket with AddressKey = ([" << address_key.source.ip << ", " << address_key.source.port << "], [" << address_key.dest.ip << ", " << address_key.dest.port << "])\n";
+#if 0
+	std::cout << "Implicitly created a socket with AddressKey = ([" << address_key.source.ip << ", " << address_key.source.port << "], [" << address_key.dest.ip << ", " << address_key.dest.port << "])\n";
+#endif
 	addressKeyToAzocketKey[address_key] = key;
 
 	dispatchPacket(azocket, TH_SYN);
@@ -186,7 +198,9 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, struc
 	azocket.syscall_id = syscallUUID;
 	azocket.state = TCP_SYN_SENT;
 
-	// std::cout << "SYNSENT from " << address_key.source.ip << " to " << address_key.dest.ip << "\n";
+#if 0
+	std::cout << "SYNSENT from " << address_key.source.ip << " to " << address_key.dest.ip << "\n";
+#endif
 }
 
 void TCPAssignment::syscall_listen(UUID syscallUUID, int pid, int sockfd, int backlog) {
@@ -198,8 +212,10 @@ void TCPAssignment::syscall_listen(UUID syscallUUID, int pid, int sockfd, int ba
 
 	listenAddressToAzocketKey[azocket.addressKey.source] = key;
 
-	// std::cout << "Listening on (" << sockfd << ", " << pid << "; ip = " << azocket.addressKey.source.ip << ", port = " << azocket.addressKey.source.port << ") with backlog = " << backlog << "\n";
-	// std::cout << "No remote address should be set, checking: (" << azocket.addressKey.dest.ip << ", " << azocket.addressKey.dest.port << ")\n";
+#if 0
+	std::cout << "Listening on (" << sockfd << ", " << pid << "; ip = " << azocket.addressKey.source.ip << ", port = " << azocket.addressKey.source.port << ") with backlog = " << backlog << "\n";
+	std::cout << "No remote address should be set, checking: (" << azocket.addressKey.dest.ip << ", " << azocket.addressKey.dest.port << ")\n";
+#endif
 
 	this->returnSystemCall(syscallUUID, 0);
 }
@@ -213,7 +229,9 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int sockfd, struct
 		return;
 	}
 
-	// std::cout << "Accept called for " << sockfd << ", " << pid << std::endl;
+#if 0
+	std::cout << "Accept called for " << sockfd << ", " << pid << std::endl;
+#endif
 
 	std::vector<int> &child_sockfds = azocket.listenControl.child_sockfds;
 	auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [&](int child_sockfd) {
@@ -226,19 +244,23 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int sockfd, struct
 
 		_syscall_getpeername(child_sockfd, pid, addr, addrlen);
 
-		// sockaddr_in addr_in = *((sockaddr_in *) addr);
-		// std::cout << "(1) Triple checking the address: " << addr_in.sin_addr.s_addr << " " << addr_in.sin_port << "\n";
-		// std::cout << "(2) Triple checking the address: " << ntohl(addr_in.sin_addr.s_addr) << " " << ntohs(addr_in.sin_port) << "\n";
+#if 0
+		sockaddr_in addr_in = *((sockaddr_in *) addr);
+		std::cout << "(1) Triple checking the address: " << addr_in.sin_addr.s_addr << " " << addr_in.sin_port << "\n";
+		std::cout << "(2) Triple checking the address: " << ntohl(addr_in.sin_addr.s_addr) << " " << ntohs(addr_in.sin_port) << "\n";
 
-		// Address address(AddrInfo(*addr, *addrlen));
-		// std::cout << "(3) Triple checking the address -> " << address.ip << " " << address.port << "\n";
+		Address address(AddrInfo(*addr, *addrlen));
+		std::cout << "(3) Triple checking the address -> " << address.ip << " " << address.port << "\n";
 
-		// std::cout << "Accept returns " << child_sockfd << "\n";
+		std::cout << "Accept returns " << child_sockfd << "\n";
+#endif
 		this->returnSystemCall(syscallUUID, child_sockfd);
 		return;
 	}
 
-	// std::cout << "Accept blocked\n";
+#if 0
+	std::cout << "Accept blocked\n";
+#endif
 	azocket.acceptControl.addr = addr;
 	azocket.acceptControl.addrlen = addrlen;
 	azocket.acceptControl.blocked = true;
@@ -249,7 +271,9 @@ void TCPAssignment::_syscall_getpeername(int sockfd, int pid, struct sockaddr *a
 	AzocketKey key(sockfd, pid);
 	
 	Address &dest = azocketKeyToAzocket[key].addressKey.dest;
-	// std::cout << "For " << sockfd << ", " << pid << " dest is " << dest.ip << ", " << dest.port << std::endl;
+#if 0
+	std::cout << "For " << sockfd << ", " << pid << " dest is " << dest.ip << ", " << dest.port << std::endl;
+#endif
 
 	AddrInfo addr_info(dest);
 	*addr = addr_info.addr;
@@ -262,9 +286,11 @@ void TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd, s
 }
 
 Packet* TCPAssignment::makePacket(struct Azocket &azocket, uint8_t type) {
-	// std::cout << "Making packet of type " << type;
-	// std::cout << " and sending from " << azocket.addressKey.source;
-	// std::cout << " to " << azocket.addressKey.dest << "\n";
+#if 0
+	std::cout << "Making packet of type " << type;
+	std::cout << " and sending from " << azocket.addressKey.source;
+	std::cout << " to " << azocket.addressKey.dest << "\n";
+#endif
 
 	Packet *packet = this->allocatePacket(54);
 
@@ -322,10 +348,14 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 		this->syscall_close(syscallUUID, pid, param.param1_int);
 		break;
 	case READ:
-		// this->syscall_read(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
+#if 0
+		this->syscall_read(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
+#endif
 		break;
 	case WRITE:
-		// this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
+#if 0
+		this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
+#endif
 		break;
 	case CONNECT:
 		this->syscall_connect(syscallUUID, pid, param.param1_int,
@@ -389,6 +419,138 @@ bool TCPAssignment::readPacket(Packet *packet, uint8_t &flags, AddressKey &addre
 	return checksum == given_checksum;
 }
 
+void TCPAssignment::handleFIN(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) {
+
+}
+
+void TCPAssignment::handleSYN(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) {
+	Address source = address_key.source;
+	Address source_zero = source;
+	source_zero.ip = 0;
+
+#if 0
+	std::cout << "source vs source_zero: " << listenAddressToAzocketKey.count(source) << " " << listenAddressToAzocketKey.count(source_zero) << std::endl;
+#endif
+
+	AzocketKey &key = listenAddressToAzocketKey.count(source_zero) ? listenAddressToAzocketKey[source_zero] : listenAddressToAzocketKey[source]; // assumption that such listening socket exists
+	Azocket &azocket = azocketKeyToAzocket[key];
+
+#if 0
+	std::cout << "SYN: " << key.sockfd << " " << key.pid << " " << azocket.listenControl.backlog << std::endl;
+#endif
+
+	if (azocket.state != TCP_LISTEN) {
+		AzocketKey &key = addressKeyToAzocketKey[address_key];
+		Azocket &azocket = azocketKeyToAzocket[key];
+		AddressKey &new_address_key = azocket.addressKey;
+
+		new_address_key = address_key;
+		azocket.ack_num = seq_num + 1;
+		addressKeyToAzocketKey[address_key] = key;
+		dispatchPacket(azocket, TH_SYN | TH_ACK);
+		azocket.state = TCP_SYN_RECV;
+
+		return;
+	}
+	if (azocket.listenControl.backlog == 0){
+#if 0
+		std::cout << "SYN The main concern for (1) that we considered is:Packet Denied\n";
+#endif
+		return;
+	}
+
+	int new_sockfd = _syscall_socket(key.pid);
+	azocket.listenControl.child_sockfds.push_back(new_sockfd);
+	azocket.listenControl.backlog--;
+
+	AzocketKey new_key = {new_sockfd, key.pid};
+	Azocket &new_azocket = azocketKeyToAzocket[new_key];
+	AddressKey &new_address_key = new_azocket.addressKey;
+
+	new_azocket.listenControl.parent_sockfd = key.sockfd;
+	new_address_key = address_key;
+	new_azocket.ack_num = seq_num + 1;
+
+	azocketKeyToAddrInfo[new_key] = AddrInfo(address_key.source);
+
+#if 0
+	std::cout << "SYN: " << seq_num << " " << ack_num << " " << new_azocket.seq_num << "\n";
+#endif
+
+	addressKeyToAzocketKey[new_address_key] = new_key;
+	dispatchPacket(new_azocket, TH_SYN | TH_ACK);
+
+	new_azocket.state = TCP_SYN_RECV;
+}
+
+void TCPAssignment::handleACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) {
+	AzocketKey &key = addressKeyToAzocketKey[address_key];
+	Azocket &azocket = azocketKeyToAzocket[key];
+
+#if 0
+	std::cout << "ACK: " << key.sockfd << " " << ack_num << " " << azocketKeyToAzocket[key].seq_num << "\n";
+#endif
+	if (ack_num != azocket.seq_num + 1 || azocket.state != TCP_SYN_RECV) {
+#if 0
+		std::cout << "ACK Packet Denied\n";
+#endif
+		return;
+	}
+
+	azocket.state = TCP_ESTABLISHED;
+
+	int parent_sockfd = azocket.listenControl.parent_sockfd;
+	AzocketKey parent_key = {parent_sockfd, key.pid};
+	Azocket &parent_azocket = azocketKeyToAzocket[parent_key];
+	parent_azocket.listenControl.backlog++;
+
+#if 0
+	std::cout << "ACK: " << parent_sockfd << " " << key.pid << " " << parent_azocket.listenControl.backlog << std::endl;
+#endif
+
+	if (parent_azocket.acceptControl.blocked) {
+		std::vector<int> &child_sockfds = parent_azocket.listenControl.child_sockfds;
+		auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [&](const int &child_sockfd) {
+			return child_sockfd == key.sockfd;
+		});
+		child_sockfds.erase(it);
+
+		_syscall_getpeername(key.sockfd, key.pid,
+			parent_azocket.acceptControl.addr,
+			parent_azocket.acceptControl.addrlen
+		);
+		parent_azocket.acceptControl.blocked = false;
+		this->returnSystemCall(parent_azocket.acceptControl.syscall_id, key.sockfd);
+	}
+}
+
+void TCPAssignment::handleFINACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) {
+
+}
+
+void TCPAssignment::handleSYNACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) {
+	AzocketKey &key = addressKeyToAzocketKey[address_key];
+	Azocket &azocket = azocketKeyToAzocket[key];
+
+#if 0
+	std::cout << "SYNACK: " << key.sockfd << " " << ack_num << " " << azocketKeyToAzocket[key].seq_num << "\n";
+#endif
+	if (ack_num != azocket.seq_num + 1) {
+#if 0
+		std::cout << "SYNACK Packet Denied\n";
+#endif
+		return;
+	}
+	
+	azocket.ack_num = seq_num + 1;
+	azocket.seq_num++;
+	dispatchPacket(azocket, TH_ACK);
+
+	azocket.state = TCP_ESTABLISHED;
+
+	this->returnSystemCall(azocket.syscall_id, 0);
+}
+
 void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 	uint8_t flags = 0;
 	AddressKey address_key;
@@ -399,134 +561,31 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 		return;
 	}
 
-	// std::cout << "Packet came to me (" << address_key.source.ip << ", " << address_key.source.port << ") from (" << address_key.dest.ip << ", " << address_key.dest.port << ")\n";
+#if 0
+	std::cout << "Packet came to me (" << address_key.source.ip << ", " << address_key.source.port << ") from (" << address_key.dest.ip << ", " << address_key.dest.port << ")\n";
+#endif
 
 	switch (flags) {
 		case TH_FIN: {
-			// std::cout << "FIN packet" << std::endl;
+			handleFIN(address_key, seq_num, ack_num);
 			break;
 		}
 		case TH_FIN | TH_ACK: {
-			// std::cout << "FINACK packet" << std::endl;
+			handleFINACK(address_key, seq_num, ack_num);
 			break;
 		}
 		case TH_SYN: {
-			Address source = address_key.source;
-			Address source_zero = source;
-			source_zero.ip = 0;
-
-			// std::cout << "source vs source_zero: " << listenAddressToAzocketKey.count(source) << " " << listenAddressToAzocketKey.count(source_zero) << std::endl;
-
-			AzocketKey &key = listenAddressToAzocketKey.count(source_zero) ? listenAddressToAzocketKey[source_zero] : listenAddressToAzocketKey[source]; // assumption that such listening socket exists
-			Azocket &azocket = azocketKeyToAzocket[key];
-
-			// std::cout << "SYN: " << key.sockfd << " " << key.pid << " " << azocket.listenControl.backlog << std::endl;
-
-			if (azocket.state != TCP_LISTEN) {
-				AzocketKey &key = addressKeyToAzocketKey[address_key];
-				Azocket &azocket = azocketKeyToAzocket[key];
-				AddressKey &new_address_key = azocket.addressKey;
-
-				new_address_key = address_key;
-				azocket.ack_num = seq_num + 1;
-				addressKeyToAzocketKey[address_key] = key;
-				dispatchPacket(azocket, TH_SYN | TH_ACK);
-				azocket.state = TCP_SYN_RECV;
-				break;
-
-				// std::cout << "SYN Packet Denied\n";
-				// break;
-			}
-			if (azocket.listenControl.backlog == 0){
-				// std::cout << "SYN The main concern for (1) that we considered is:Packet Denied\n";
-				break;
-			}
-
-			int new_sockfd = _syscall_socket(key.pid);
-			azocket.listenControl.child_sockfds.push_back(new_sockfd);
-			azocket.listenControl.backlog--;
-
-			AzocketKey new_key = {new_sockfd, key.pid};
-			Azocket &new_azocket = azocketKeyToAzocket[new_key];
-			AddressKey &new_address_key = new_azocket.addressKey;
-
-			new_azocket.listenControl.parent_sockfd = key.sockfd;
-			new_address_key = address_key;
-			new_azocket.ack_num = seq_num + 1;
-
-			azocketKeyToAddrInfo[new_key] = AddrInfo(address_key.source);
-
-			// std::cout << "SYN: " << seq_num << " " << ack_num << " " << new_azocket.seq_num << "\n";
-
-			addressKeyToAzocketKey[new_address_key] = new_key;
-			dispatchPacket(new_azocket, TH_SYN | TH_ACK);
-
-			new_azocket.state = TCP_SYN_RECV;
+			handleSYN(address_key, seq_num, ack_num);
 			break;
 		}
-		case TH_SYN | TH_ACK: { // we need retransmission here in the future
-			AzocketKey &key = addressKeyToAzocketKey[address_key];
-			Azocket &azocket = azocketKeyToAzocket[key];
-
-			// std::cout << "SYNACK: " << key.sockfd << " " << ack_num << " " << azocketKeyToAzocket[key].seq_num << "\n";
-			if (ack_num != azocket.seq_num + 1) {
-				// Not doing this call below because it could be just erroneous packet...
-				// Hope that the destination host will send us the right packet.
-				// this->returnSystemCall(azocketKeyToAzocket[sockfd].syscall_id, -1);
-				// std::cout << "SYNACK Packet Denied\n";
-				break;
-			}
-			
-			azocket.ack_num = seq_num + 1;
-			azocket.seq_num++;
-			dispatchPacket(azocket, TH_ACK);
-
-			azocket.state = TCP_ESTABLISHED;
-
-			this->returnSystemCall(azocket.syscall_id, 0);
+		case TH_SYN | TH_ACK: {
+			handleSYNACK(address_key, seq_num, ack_num);
 			break;
 		}
 		case TH_ACK: {
-			AzocketKey &key = addressKeyToAzocketKey[address_key];
-			Azocket &azocket = azocketKeyToAzocket[key];
-
-			// std::cout << "ACK: " << key.sockfd << " " << ack_num << " " << azocketKeyToAzocket[key].seq_num << "\n";
-			if (ack_num != azocket.seq_num + 1 || azocket.state != TCP_SYN_RECV) {
-				// Not doing this call below because it could be just erroneous packet...
-				// Hope that the destination host will send us the right packet.
-				// this->returnSystemCall(azocketKeyToAzocket[sockfd].syscall_id, -1);
-				// std::cout << "ACK Packet Denied\n";
-				break;
-			}
-
-			azocket.state = TCP_ESTABLISHED;
-
-			int parent_sockfd = azocket.listenControl.parent_sockfd;
-			AzocketKey parent_key = {parent_sockfd, key.pid};
-			Azocket &parent_azocket = azocketKeyToAzocket[parent_key];
-			parent_azocket.listenControl.backlog++;
-
-			// std::cout << "ACK: " << parent_sockfd << " " << key.pid << " " << parent_azocket.listenControl.backlog << std::endl;
-
-			if (parent_azocket.acceptControl.blocked) {
-				std::vector<int> &child_sockfds = parent_azocket.listenControl.child_sockfds;
-				auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [&](const int &child_sockfd) {
-					return child_sockfd == key.sockfd;
-				});
-				child_sockfds.erase(it);
-
-				_syscall_getpeername(key.sockfd, key.pid,
-					parent_azocket.acceptControl.addr,
-					parent_azocket.acceptControl.addrlen
-				);
-				parent_azocket.acceptControl.blocked = false;
-				this->returnSystemCall(parent_azocket.acceptControl.syscall_id, key.sockfd);
-			}
-
-			break;
+			handleACK(address_key, seq_num, ack_num);
 		}
 		default: {
-			// std::cout << "Some other type of packet" << std::endl;
 			break;
 		}
 	}

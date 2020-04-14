@@ -68,17 +68,25 @@ protected:
 		}
 
 		void toNetwork() {
+#if 0
+			std::cout << "Before: " << ip << ", " << port << "\n";
+#endif
 			ip = htonl(ip);
 			port = htons(port);
+#if 0
+			std::cout << "Before: " << ip << ", " << port << "\n";
+#endif
 		}
 
 		void toHost() {
-			// std::cout << "Before: " << ip << ", " << port << "\n";
-
+#if 0
+			std::cout << "Before: " << ip << ", " << port << "\n";
+#endif
 			ip = ntohl(ip);
 			port = ntohs(port);
-
-			// std::cout << "After: " << ip << ", " << port << "\n";
+#if 0
+			std::cout << "Before: " << ip << ", " << port << "\n";
+#endif
 		}
 
 		friend std::ostream& operator << (std::ostream& stream, const Address &address) {
@@ -119,10 +127,14 @@ protected:
 		}
 
 		void toHost() {
-			// std::cout << "Changing source...\n";
+#if 0
+			std::cout << "Changing source...\n";
+#endif
 			source.toHost();
 
-			// std::cout << "Changing dest...\n";
+#if 0
+			std::cout << "Changing dest...\n";
+#endif
 			dest.toHost();
 		}
 	};
@@ -269,6 +281,11 @@ protected:
 	virtual Packet* makePacket(struct Azocket &azocket, uint8_t type) final;
 	virtual void dispatchPacket(struct Azocket &azocket, uint8_t type) final;	
 	virtual bool readPacket(Packet *packet, uint8_t &flags, AddressKey &address_key, uint32_t &seq_num, uint32_t &ack_num) final;
+	virtual void handleFIN(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) final;
+	virtual void handleSYN(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) final;
+	virtual void handleACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) final;
+	virtual void handleFINACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) final;
+	virtual void handleSYNACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) final;
 };
 
 class TCPAssignmentProvider
