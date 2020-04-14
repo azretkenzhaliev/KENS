@@ -271,7 +271,7 @@ protected:
 		}
 	};
 
-	std::map<AddressKey, AzocketKey> addressKeyToAzocketKey;
+	std::unordered_map<AddressKey, AzocketKey, AddressKeyHash> addressKeyToAzocketKey;
 	std::unordered_map<AzocketKey, AddrInfo, AzocketKeyHash> azocketKeyToAddrInfo;
 	std::unordered_map<Address, AzocketKey, AddressHash> listenAddressToAzocketKey;
 	std::unordered_map<AzocketKey, Azocket, AzocketKeyHash> azocketKeyToAzocket;
