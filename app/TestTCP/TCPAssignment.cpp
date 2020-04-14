@@ -383,7 +383,22 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 	packet->readData(14 + 20 + 4, &seq_num, 4);
 	packet->readData(14 + 20 + 8, &ack_num, 4);
 
+	uint16_t given_checksum = 0;
+	packet->readData(14 + 20 + 16, &given_checksum, 2);
+
+	uint16_t null_checksum = 0;
+	packet->writeData(14 + 20 + 16, &null_checksum, 2);
+
+	size_t tcp_len = 20;
+	uint8_t *tcp_seg = (uint8_t *) malloc(tcp_len);
+	packet->readData(14 + 20, tcp_seg, tcp_len);
+
 	freePacket(packet);
+
+	uint16_t checksum = htons(~NetworkUtil::tcp_sum(address_key.dest.ip, address_key.source.ip, tcp_seg, tcp_len));
+	if (checksum != given_checksum) {
+		return;
+	}
 
 	address_key.toHost();
 	seq_num = ntohl(seq_num);
@@ -428,7 +443,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 				// break;
 			}
 			if (azocket.listenControl.backlog == 0){
-				// std::cout << "SYN Packet Denied\n";
+				// std::cout << "SYN The main concern for (1) that we considered is:Packet Denied\n";
 				break;
 			}
 
@@ -481,7 +496,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			Azocket &azocket = azocketKeyToAzocket[key];
 
 			// std::cout << "ACK: " << key.sockfd << " " << ack_num << " " << azocketKeyToAzocket[key].seq_num << "\n";
-			if (ack_num != azocket.seq_num + 1) {
+			if (ack_num != azocket.seq_num + 1 || azocket.state != STATE_SYN_RCVD) {
 				// Not doing this call below because it could be just erroneous packet...
 				// Hope that the destination host will send us the right packet.
 				// this->returnSystemCall(azocketKeyToAzocket[sockfd].syscall_id, -1);
