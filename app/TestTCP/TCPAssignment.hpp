@@ -43,33 +43,6 @@ protected:
 	struct AddressKeyHash;
 	struct AzocketKeyHash;
 
-	enum AzocketState : uint8_t {
-		STATE_CLOSED,
-		STATE_LISTEN,
-		STATE_SYNSENT,
-		STATE_SYN_RCVD,
-		STATE_ESTAB
-	};
-
-	enum PacketFlag : uint8_t {
-		FLAG_FIN,
-		FLAG_SYN,
-		FLAG_RST,
-		FLAG_PSH,
-		FLAG_ACK,
-		FLAG_URG,
-		FLAG_ECE,
-		FLAG_CWR
-	};
-
-	enum PacketType : uint8_t {
-		FIN = (1 << PacketFlag::FLAG_FIN), // 1
-		SYN = (1 << PacketFlag::FLAG_SYN), // 2
-		ACK = (1 << PacketFlag::FLAG_ACK), // 16
-		FINACK = (1 << PacketFlag::FLAG_FIN) | (1 << PacketFlag::FLAG_ACK), // 17
-		SYNACK = (1 << PacketFlag::FLAG_SYN) | (1 << PacketFlag::FLAG_ACK)  // 18
-	};
-
 	struct Address {
 		uint32_t ip;
 		uint16_t port;
@@ -215,10 +188,10 @@ protected:
 
 		ListenController listenControl;
 		AcceptController acceptControl;
-		AzocketState state;
+		uint8_t state;
 
-		Azocket() : state(STATE_CLOSED) {}
-		Azocket(const AzocketKey &key, const AzocketState &state) : key(key), state(state) {
+		Azocket() : state(TCP_CLOSE) {}
+		Azocket(const AzocketKey &key, const uint8_t &state) : key(key), state(state) {
 			std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
 			seq_num = std::uniform_int_distribution<uint32_t>(0, UINT32_MAX)(rng);
 		}
@@ -293,8 +266,8 @@ protected:
 	virtual void packetArrived(std::string fromModule, Packet* packet) final;
 
 	virtual void implicit_bind(int sockfd, int pid, uint32_t dest_ip) final;
-	virtual Packet* makePacket(struct Azocket &azocket, PacketType type) final;
-	virtual void dispatchPacket(struct Azocket &azocket, PacketType type) final;	
+	virtual Packet* makePacket(struct Azocket &azocket, uint8_t type) final;
+	virtual void dispatchPacket(struct Azocket &azocket, uint8_t type) final;	
 	virtual bool readPacket(Packet *packet, uint8_t &flags, AddressKey &address_key, uint32_t &seq_num, uint32_t &ack_num) final;
 };
 

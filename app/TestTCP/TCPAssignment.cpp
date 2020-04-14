@@ -51,7 +51,7 @@ int TCPAssignment::_syscall_socket(int pid) {
 	if (fd != -1) {
 		AzocketKey key(fd, pid);
 		azocketKeys.insert(key);
-		azocketKeyToAzocket[key] = Azocket(key, STATE_CLOSED);
+		azocketKeyToAzocket[key] = Azocket(key, TCP_CLOSE);
 	}
 
 	return fd;
@@ -181,10 +181,10 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, struc
 	// std::cout << "Implicitly created a socket with AddressKey = ([" << address_key.source.ip << ", " << address_key.source.port << "], [" << address_key.dest.ip << ", " << address_key.dest.port << "])\n";
 	addressKeyToAzocketKey[address_key] = key;
 
-	dispatchPacket(azocket, SYN);
+	dispatchPacket(azocket, TH_SYN);
 
 	azocket.syscall_id = syscallUUID;
-	azocket.state = STATE_SYNSENT;
+	azocket.state = TCP_SYN_SENT;
 
 	// std::cout << "SYNSENT from " << address_key.source.ip << " to " << address_key.dest.ip << "\n";
 }
@@ -194,7 +194,7 @@ void TCPAssignment::syscall_listen(UUID syscallUUID, int pid, int sockfd, int ba
 	Azocket &azocket = azocketKeyToAzocket[key];
 
 	azocket.listenControl.backlog = backlog;
-	azocket.state = STATE_LISTEN;
+	azocket.state = TCP_LISTEN;
 
 	listenAddressToAzocketKey[azocket.addressKey.source] = key;
 
@@ -208,7 +208,7 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int sockfd, struct
 	AzocketKey key(sockfd, pid);
 	Azocket &azocket = azocketKeyToAzocket[key];
 
-	if (azocket.state != STATE_LISTEN) {
+	if (azocket.state != TCP_LISTEN) {
 		this->returnSystemCall(syscallUUID, -1);
 		return;
 	}
@@ -218,7 +218,7 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int sockfd, struct
 	std::vector<int> &child_sockfds = azocket.listenControl.child_sockfds;
 	auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [&](int child_sockfd) {
 		AzocketKey child_key(child_sockfd, pid);
-		return azocketKeyToAzocket[child_key].state == STATE_ESTAB;
+		return azocketKeyToAzocket[child_key].state == TCP_ESTABLISHED;
 	});
 	if (it != child_sockfds.end()) {
 		int child_sockfd = *it;
@@ -261,7 +261,7 @@ void TCPAssignment::syscall_getpeername(UUID syscallUUID, int pid, int sockfd, s
 	this->returnSystemCall(syscallUUID, 0);
 }
 
-Packet* TCPAssignment::makePacket(struct Azocket &azocket, PacketType type) {
+Packet* TCPAssignment::makePacket(struct Azocket &azocket, uint8_t type) {
 	// std::cout << "Making packet of type " << type;
 	// std::cout << " and sending from " << azocket.addressKey.source;
 	// std::cout << " to " << azocket.addressKey.dest << "\n";
@@ -276,7 +276,7 @@ Packet* TCPAssignment::makePacket(struct Azocket &azocket, PacketType type) {
 	uint16_t total_length = htons(20);
 	packet->writeData(14 + 2, &total_length, 2);
 
-	if (type != SYN) {
+	if (type != TH_SYN) {
 		uint32_t ack_num = htonl(azocket.ack_num);
 		packet->writeData(14 + 20 + 8, &ack_num, 4);
 	}
@@ -306,7 +306,7 @@ Packet* TCPAssignment::makePacket(struct Azocket &azocket, PacketType type) {
 	return packet;
 }
 
-void TCPAssignment::dispatchPacket(struct Azocket &azocket, PacketType type) {
+void TCPAssignment::dispatchPacket(struct Azocket &azocket, uint8_t type) {
 	Packet *packet = makePacket(azocket, type);
 	this->sendPacket("IPv4", packet);
 }
@@ -402,15 +402,15 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 	// std::cout << "Packet came to me (" << address_key.source.ip << ", " << address_key.source.port << ") from (" << address_key.dest.ip << ", " << address_key.dest.port << ")\n";
 
 	switch (flags) {
-		case FIN: {
+		case TH_FIN: {
 			// std::cout << "FIN packet" << std::endl;
 			break;
 		}
-		case FINACK: {
+		case TH_FIN | TH_ACK: {
 			// std::cout << "FINACK packet" << std::endl;
 			break;
 		}
-		case SYN: {
+		case TH_SYN: {
 			Address source = address_key.source;
 			Address source_zero = source;
 			source_zero.ip = 0;
@@ -422,7 +422,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 
 			// std::cout << "SYN: " << key.sockfd << " " << key.pid << " " << azocket.listenControl.backlog << std::endl;
 
-			if (azocket.state != STATE_LISTEN) {
+			if (azocket.state != TCP_LISTEN) {
 				AzocketKey &key = addressKeyToAzocketKey[address_key];
 				Azocket &azocket = azocketKeyToAzocket[key];
 				AddressKey &new_address_key = azocket.addressKey;
@@ -430,8 +430,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 				new_address_key = address_key;
 				azocket.ack_num = seq_num + 1;
 				addressKeyToAzocketKey[address_key] = key;
-				dispatchPacket(azocket, SYNACK);
-				azocket.state = STATE_SYN_RCVD;
+				dispatchPacket(azocket, TH_SYN | TH_ACK);
+				azocket.state = TCP_SYN_RECV;
 				break;
 
 				// std::cout << "SYN Packet Denied\n";
@@ -459,12 +459,12 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			// std::cout << "SYN: " << seq_num << " " << ack_num << " " << new_azocket.seq_num << "\n";
 
 			addressKeyToAzocketKey[new_address_key] = new_key;
-			dispatchPacket(new_azocket, SYNACK);
+			dispatchPacket(new_azocket, TH_SYN | TH_ACK);
 
-			new_azocket.state = STATE_SYN_RCVD;
+			new_azocket.state = TCP_SYN_RECV;
 			break;
 		}
-		case SYNACK: { // we need retransmission here in the future
+		case TH_SYN | TH_ACK: { // we need retransmission here in the future
 			AzocketKey &key = addressKeyToAzocketKey[address_key];
 			Azocket &azocket = azocketKeyToAzocket[key];
 
@@ -479,19 +479,19 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			
 			azocket.ack_num = seq_num + 1;
 			azocket.seq_num++;
-			dispatchPacket(azocket, ACK);
+			dispatchPacket(azocket, TH_ACK);
 
-			azocket.state = STATE_ESTAB;
+			azocket.state = TCP_ESTABLISHED;
 
 			this->returnSystemCall(azocket.syscall_id, 0);
 			break;
 		}
-		case ACK: {
+		case TH_ACK: {
 			AzocketKey &key = addressKeyToAzocketKey[address_key];
 			Azocket &azocket = azocketKeyToAzocket[key];
 
 			// std::cout << "ACK: " << key.sockfd << " " << ack_num << " " << azocketKeyToAzocket[key].seq_num << "\n";
-			if (ack_num != azocket.seq_num + 1 || azocket.state != STATE_SYN_RCVD) {
+			if (ack_num != azocket.seq_num + 1 || azocket.state != TCP_SYN_RECV) {
 				// Not doing this call below because it could be just erroneous packet...
 				// Hope that the destination host will send us the right packet.
 				// this->returnSystemCall(azocketKeyToAzocket[sockfd].syscall_id, -1);
@@ -499,7 +499,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 				break;
 			}
 
-			azocket.state = STATE_ESTAB;
+			azocket.state = TCP_ESTABLISHED;
 
 			int parent_sockfd = azocket.listenControl.parent_sockfd;
 			AzocketKey parent_key = {parent_sockfd, key.pid};
