@@ -152,10 +152,8 @@ void TCPAssignment::syscall_getsockname(UUID syscallUUID, int pid, int sockfd, s
 }
 
 void TCPAssignment::implicit_bind(int sockfd, int pid, uint32_t dest_ip) {
-	std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
-	uint16_t local_port = std::uniform_int_distribution<uint16_t>(1025, UINT16_MAX)(rng);
-
 	uint32_t local_ip = 0;
+
 	int index = this->getHost()->getRoutingTable((uint8_t *) &dest_ip);
 	this->getHost()->getIPAddr((uint8_t *) &local_ip, index);
 
@@ -165,12 +163,15 @@ void TCPAssignment::implicit_bind(int sockfd, int pid, uint32_t dest_ip) {
 	std::cout << "implicit binding to -> " << local_ip << " " << local_port << "\n";
 	std::cout << Address(local_ip, local_port) << std::endl;
 #endif
-	AddrInfo addr_info(Address(local_ip, local_port));
 
-	while (_syscall_bind(sockfd, pid, &addr_info.addr, addr_info.addrlen) != 0){
+	uint16_t local_port;
+	AddrInfo addr_info;
+
+	std::mt19937 rng(std::chrono::steady_clock::now().time_since_epoch().count());
+	do {
 		local_port = std::uniform_int_distribution<uint16_t>(1025, UINT16_MAX)(rng);
 		addr_info = AddrInfo(Address(local_ip, local_port));
-	}
+	} while (_syscall_bind(sockfd, pid, &addr_info.addr, addr_info.addrlen) != 0);
 }
 
 void TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t addrlen) {
@@ -398,6 +399,9 @@ bool TCPAssignment::readPacket(Packet *packet, uint8_t &flags, AddressKey &addre
 	packet->readData(14 + 20 + 4, &seq_num, 4);
 	packet->readData(14 + 20 + 8, &ack_num, 4);
 
+	seq_num = ntohl(seq_num);
+	ack_num = ntohl(ack_num);
+
 	uint16_t given_checksum = 0;
 	packet->readData(14 + 20 + 16, &given_checksum, 2);
 
@@ -413,8 +417,6 @@ bool TCPAssignment::readPacket(Packet *packet, uint8_t &flags, AddressKey &addre
 	uint16_t checksum = htons(~NetworkUtil::tcp_sum(address_key.dest.ip, address_key.source.ip, tcp_seg, tcp_len));
 
 	address_key.toHost();
-	seq_num = ntohl(seq_num);
-	ack_num = ntohl(ack_num);
 
 	return checksum == given_checksum;
 }
@@ -567,11 +569,15 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 
 	switch (flags) {
 		case TH_FIN: {
+#if 0
 			handleFIN(address_key, seq_num, ack_num);
+#endif
 			break;
 		}
 		case TH_FIN | TH_ACK: {
+#if 0
 			handleFINACK(address_key, seq_num, ack_num);
+#endif
 			break;
 		}
 		case TH_SYN: {
@@ -584,9 +590,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 		}
 		case TH_ACK: {
 			handleACK(address_key, seq_num, ack_num);
-		}
-		default: {
-			break;
 		}
 	}
 }
