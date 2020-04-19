@@ -204,7 +204,7 @@ void TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int sockfd, struc
 #endif
 
 	Address dest_address(AddrInfo(*addr, addrlen));
-	if (!azocketKeyToAddrInfo.count(key)){
+	if (!azocketKeyToAddrInfo.count(key)) {
 		implicit_bind(sockfd, pid, dest_address.ip);
 	}
 
@@ -473,11 +473,11 @@ void TCPAssignment::handleSYN(const AddressKey &address_key, const uint32_t &seq
 		azocket.ack_num = seq_num + 1;
 		addressKeyToAzocketKey[address_key] = key;
 		dispatchPacket(azocket, TH_SYN | TH_ACK);
-		azocket.state = TCP_SYN_RECV;
 
+		azocket.state = TCP_SYN_RECV;
 		return;
 	}
-	if (azocket.listenControl.backlog == 0){
+	if (azocket.listenControl.backlog == 0) {
 #if 0
 		std::cout << "SYN The main concern for (1) that we considered is:Packet Denied\n";
 #endif
