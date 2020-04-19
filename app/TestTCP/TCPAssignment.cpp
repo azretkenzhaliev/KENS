@@ -12,6 +12,7 @@
 #include <cerrno>
 #include <E/Networking/E_Packet.hpp>
 #include <E/Networking/E_NetworkUtil.hpp>
+#include <E/E_TimeUtil.hpp>
 #include "TCPAssignment.hpp"
 #include <random>
 #include <chrono>
@@ -46,7 +47,7 @@ void TCPAssignment::finalize()
 
 int TCPAssignment::_syscall_socket(int pid) {
 	int fd = this->createFileDescriptor(pid);
-#if 0
+#if 1
 	std::cout << "_syscall_socket -> " << fd << " " << pid << std::endl;
 #endif
 	if (fd != -1) {
@@ -70,14 +71,28 @@ void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int sockfd) {
 		return;
 	}
 
-	if (azocketKeyToAddrInfo.count(key)) {
-		Address address(azocketKeyToAddrInfo[key]);
-		bindedAddresses.erase(address);
-		azocketKeyToAddrInfo.erase(key);
-	}
+	Azocket azocket = azocketKeyToAzocket[key];
+	if (azocket.state == TCP_ESTABLISHED){
+		std::cout << "if state: " << azocketKeyToAzocket[key].state << std::endl;
+		dispatchPacket(azocketKeyToAzocket[key], TH_FIN | TH_ACK);
+		// azocketKeyToAzocket[key].syscall_id = syscallUUID;
+		azocketKeyToAzocket[key].state = TCP_FIN_WAIT1;
+	} else if (azocket.state == TCP_CLOSE_WAIT){
+		std::cout << "elif state: " << azocketKeyToAzocket[key].state << std::endl;
+		dispatchPacket(azocketKeyToAzocket[key], TH_FIN | TH_ACK);
+		// azocketKeyToAzocket[key].syscall_id = syscallUUID;
+		azocketKeyToAzocket[key].state = TCP_LAST_ACK;
+	} else{
+		// std::cout << "else state: " << azocketKeyToAzocket[key].state << std::endl;
+		if (azocketKeyToAddrInfo.count(key)) {
+			Address address(azocketKeyToAddrInfo[key]);
+			bindedAddresses.erase(address);
+			azocketKeyToAddrInfo.erase(key);
+		}
 
-	azocketKeys.erase(key);
-	azocketKeyToAzocket.erase(key);
+		azocketKeys.erase(key);
+		azocketKeyToAzocket.erase(key);
+	}
 
 	this->removeFileDescriptor(pid, sockfd);
 	this->returnSystemCall(syscallUUID, 0);
@@ -230,11 +245,15 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int sockfd, struct
 		return;
 	}
 
-#if 0
-	std::cout << "Accept called for " << sockfd << ", " << pid << std::endl;
+#if 1
+	std::cout << "Accept called for " << sockfd << ", " << pid << ", " << syscallUUID << std::endl;
 #endif
 
 	std::vector<int> &child_sockfds = azocket.listenControl.child_sockfds;
+	for (int i: child_sockfds){
+		AzocketKey child_key(i, pid);
+		std::cout << "child: " << child_key.sockfd << " " << (uint16_t) azocketKeyToAzocket[child_key].state << std::endl;
+	}
 	auto it = std::find_if(child_sockfds.begin(), child_sockfds.end(), [&](int child_sockfd) {
 		AzocketKey child_key(child_sockfd, pid);
 		return azocketKeyToAzocket[child_key].state == TCP_ESTABLISHED;
@@ -245,7 +264,7 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int sockfd, struct
 
 		_syscall_getpeername(child_sockfd, pid, addr, addrlen);
 
-#if 0
+#if 1
 		sockaddr_in addr_in = *((sockaddr_in *) addr);
 		std::cout << "(1) Triple checking the address: " << addr_in.sin_addr.s_addr << " " << addr_in.sin_port << "\n";
 		std::cout << "(2) Triple checking the address: " << ntohl(addr_in.sin_addr.s_addr) << " " << ntohs(addr_in.sin_port) << "\n";
@@ -259,7 +278,7 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int sockfd, struct
 		return;
 	}
 
-#if 0
+#if 1
 	std::cout << "Accept blocked\n";
 #endif
 	azocket.acceptControl.addr = addr;
@@ -492,10 +511,24 @@ void TCPAssignment::handleACK(const AddressKey &address_key, const uint32_t &seq
 #if 0
 	std::cout << "ACK: " << key.sockfd << " " << ack_num << " " << azocketKeyToAzocket[key].seq_num << "\n";
 #endif
-	if (ack_num != azocket.seq_num + 1 || azocket.state != TCP_SYN_RECV) {
+	if (ack_num != azocket.seq_num + 1) {
 #if 0
 		std::cout << "ACK Packet Denied\n";
 #endif
+		return;
+	}
+
+	if (azocket.state == TCP_FIN_WAIT1) {
+		std::cout << "ACK: TCP_FIN_WAIT1";
+		azocket.state = TCP_FIN_WAIT2;
+		return;
+	}else if (azocket.state == TCP_LAST_ACK){
+		std::cout << "ACK: TCP_LAST_ACK\n";
+		timerCallback((void *) &azocketKeyToAzocket[key]);
+		return;
+	}
+
+	if (azocket.state != TCP_SYN_RECV) {
 		return;
 	}
 
@@ -506,7 +539,7 @@ void TCPAssignment::handleACK(const AddressKey &address_key, const uint32_t &seq
 	Azocket &parent_azocket = azocketKeyToAzocket[parent_key];
 	parent_azocket.listenControl.backlog++;
 
-#if 0
+#if 1
 	std::cout << "ACK: " << parent_sockfd << " " << key.pid << " " << parent_azocket.listenControl.backlog << std::endl;
 #endif
 
@@ -522,12 +555,53 @@ void TCPAssignment::handleACK(const AddressKey &address_key, const uint32_t &seq
 			parent_azocket.acceptControl.addrlen
 		);
 		parent_azocket.acceptControl.blocked = false;
+		std::cout << "returns accept: "<< parent_azocket.acceptControl.syscall_id << " " << key.sockfd << std::endl;
 		this->returnSystemCall(parent_azocket.acceptControl.syscall_id, key.sockfd);
 	}
 }
 
 void TCPAssignment::handleFINACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) {
+	AzocketKey &key = addressKeyToAzocketKey[address_key];
+	Azocket &azocket = azocketKeyToAzocket[key];
 
+#if 1
+	std::cout << "FINACK: " << key.sockfd << " " << ack_num << " " << azocketKeyToAzocket[key].seq_num << "\n";
+#endif
+	if (ack_num != azocket.seq_num + 1) {
+#if 0
+		std::cout << "FINACK Packet Denied\n";
+#endif
+		return;
+	}
+
+	std::cout<<"state: " << azocket.state << std::endl;
+
+	if (azocket.state == TCP_FIN_WAIT2){
+		std::cout<<"state: " << "TCP_FIN_WAIT2" << std::endl;
+		azocket.ack_num = seq_num + 1;
+		azocket.seq_num++;
+		dispatchPacket(azocket, TH_ACK);
+
+		azocket.state = TCP_TIME_WAIT;
+		this->addTimer((void *) &azocketKeyToAzocket[key], TimeUtil::makeTime(2, TimeUtil::MINUTE));
+		return;
+	} else if (azocket.state == TCP_ESTABLISHED) {
+		std::cout<<"state: " << "TCP_ESTABLISHED" << std::endl;
+		azocket.ack_num = seq_num + 1;
+		azocket.seq_num++;
+		dispatchPacket(azocket, TH_ACK);
+
+		azocket.state = TCP_CLOSE_WAIT;
+		return;
+	}
+	
+	azocket.ack_num = seq_num + 1;
+	azocket.seq_num++;
+	dispatchPacket(azocket, TH_ACK);
+
+	azocket.state = TCP_ESTABLISHED;
+
+	// this->returnSystemCall(azocket.syscall_id, 0);
 }
 
 void TCPAssignment::handleSYNACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) {
@@ -575,9 +649,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			break;
 		}
 		case TH_FIN | TH_ACK: {
-#if 0
 			handleFINACK(address_key, seq_num, ack_num);
-#endif
 			break;
 		}
 		case TH_SYN: {
@@ -595,6 +667,18 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 }
 
 void TCPAssignment::timerCallback(void* payload) {
+	Azocket* azocket = (Azocket *) payload;
+	AzocketKey key = azocket->key;
 
+	std::cout << "deleting key: " << key.sockfd << std::endl;
+
+	if (azocketKeyToAddrInfo.count(key)) {
+		Address address(azocketKeyToAddrInfo[key]);
+		bindedAddresses.erase(address);
+		azocketKeyToAddrInfo.erase(key);
+	}
+
+	azocketKeys.erase(key);
+	azocketKeyToAzocket.erase(key);
 }
 }
