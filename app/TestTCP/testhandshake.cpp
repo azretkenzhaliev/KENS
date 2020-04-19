@@ -43,7 +43,9 @@ protected:
 		addr.sin_family = AF_INET;
 		addr.sin_addr.s_addr = inet_addr(env["LISTEN_ADDR"].c_str());
 		addr.sin_port = htons(atoi(env["LISTEN_PORT"].c_str()));
+#if 0
 		std::cout << "TEST: Server (fd = " << server_socket << ") listening on (" << ntohl(addr.sin_addr.s_addr) << ", " << ntohs(addr.sin_port) << ")\n";
+#endif
 
 		int ret = bind(server_socket, (struct sockaddr*)&addr, len);
 		EXPECT_EQ(ret, 0);
@@ -71,9 +73,10 @@ protected:
 			int client_fd = accept(server_socket, (struct sockaddr*)&client_addr, &client_len);
 			if(client_fd >= 0)
 			{
+#if 0
 				std::cout << "TEST: Accept on server (fd = " << server_socket << ") returned client_fd = " << client_fd << std::endl;
 				std::cout << "TEST: Accept on server (fd = " << server_socket << ") returned client_addr = (" << ntohl(client_addr.sin_addr.s_addr) << ", " << ntohs(client_addr.sin_port) << ")\n";
-
+#endif
 				EXPECT_EQ(client_len, sizeof(client_addr));
 				EXPECT_EQ(client_addr.sin_family, AF_INET);
 
@@ -81,8 +84,9 @@ protected:
 				socklen_t temp_len = sizeof(temp_addr);
 				int ret = getsockname(client_fd, (struct sockaddr*)&temp_addr, &temp_len);
 				EXPECT_EQ(ret, 0);
-
+#if 0
 				std::cout << "TEST: Calling getsockname (client_fd = " << client_fd << ") returned (" << ntohl(temp_addr.sin_addr.s_addr) << ", " << ntohs(temp_addr.sin_port) << ")\n";
+#endif
 
 				EXPECT_TRUE( (addr.sin_addr.s_addr == 0) ||
 						(addr.sin_addr.s_addr == temp_addr.sin_addr.s_addr));
@@ -127,7 +131,6 @@ protected:
 protected:
 	void E_Main()
 	{
-		// std::cout << "SR*NYI TEST\n";
 		std::vector<int> client_sockets;
 		std::vector<int> client_ports;
 		int connect_count = atoi(env["CONNECT_COUNT"].c_str());
@@ -136,8 +139,10 @@ protected:
 
 		long connect_time = atol(env["CONNECT_TIME"].c_str());
 		usleep(connect_time);
-
+#if 0
 		std::cout << "SR*NYI TEST PRODOLZHAETSYA\n";
+#endif
+
 		for(int k=0; k<connect_count; k++)
 		{
 			int client_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -148,13 +153,15 @@ protected:
 			addr.sin_family = AF_INET;
 			addr.sin_addr.s_addr = inet_addr(env["CONNECT_ADDR"].c_str());
 			addr.sin_port = htons(atoi(env["CONNECT_PORT"].c_str()));
-
-			// std::cout << ntohl(addr.sin_addr.s_addr) << " " << ntohs(addr.sin_port) << "\n";
+#if 0
+			std::cout << ntohl(addr.sin_addr.s_addr) << " " << ntohs(addr.sin_port) << "\n";
 			std::cout << "SR*NYI TEST ZASHEL SLISHKOM DALEKO...\n";
+#endif
 
 			int ret = connect(client_socket, (struct sockaddr*)&addr, len);
+#if 0
 			std::cout << "Return = " << ret << "\n";
-			
+#endif
 			if(ret == 0)
 			{
 				struct sockaddr_in temp_addr;
@@ -193,7 +200,9 @@ protected:
 
 		for(auto client_fd : client_sockets)
 		{
+#if 0
 			std::cout << "closing client_fd" << std::endl;
+#endif
 			close(client_fd);
 		}
 	}
