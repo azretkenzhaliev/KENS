@@ -16,6 +16,7 @@
 #include <netinet/ip.h>
 #include <netinet/in.h>
 #include <set>
+#include <deque>
 
 #include <E/E_TimerModule.hpp>
 
@@ -37,6 +38,8 @@ protected:
 	struct AddrInfo;
 	struct ListenController;
 	struct AcceptController;
+	struct SenderBuffer;
+	struct ReceiverBuffer;
 	struct AzocketKey;
 	struct Azocket;
 	struct AddressHash;
@@ -180,6 +183,22 @@ protected:
 		AcceptController() : blocked(false) {}
 	};
 
+	struct SenderBuffer {
+		int acked_bytes;
+		int can_receive;
+		int not_sent;
+		std::deque <uint8_t> buf; 
+
+		SenderBuffer() : acked_bytes(0), can_receive(51200), not_sent(0) {}
+	};
+
+	struct ReceiverBuffer {
+		int window_size;
+		uint8_t *rcv_buf;
+
+		ReceiverBuffer() : window_size(51200) {}
+	};
+
 	struct AzocketKey {
 		int sockfd;
 		int pid;
@@ -203,6 +222,8 @@ protected:
 
 		ListenController listenControl;
 		AcceptController acceptControl;
+		SenderBuffer senderBuffer;
+		ReceiverBuffer receiverBuffer;
 		uint8_t state;
 
 		Azocket() : state(TCP_CLOSE) {}
@@ -277,12 +298,16 @@ protected:
 	virtual void syscall_accept(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t *addrlen) final;
 	virtual void _syscall_getpeername(int sockfd, int pid, struct sockaddr *addr, socklen_t* addrlen) final;
 	virtual void syscall_getpeername(UUID syscallUUID, int pid, int sockfd, struct sockaddr *addr, socklen_t* addrlen) final;
+	virtual void syscall_write(UUID syscallUUID, int pid, int sockfd, const void *buf, size_t count) final;
+	virtual int writeData(Azocket &azocket, const void *buf, size_t count) final;
+	virtual void syscall_read(UUID syscallUUID, int pid, int sockfd, void *buf, size_t count) final;
 	virtual void systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param) final;
 	virtual void packetArrived(std::string fromModule, Packet* packet) final;
 
 	virtual void implicit_bind(int sockfd, int pid, uint32_t dest_ip) final;
-	virtual Packet* makePacket(struct Azocket &azocket, uint8_t type) final;
+	virtual Packet* makePacket(struct Azocket &azocket, uint8_t type, int bytes=0) final;
 	virtual void dispatchPacket(struct Azocket &azocket, uint8_t type) final;	
+	virtual void dispatchWritePackets(struct Azocket &azocket) final;
 	virtual bool readPacket(Packet *packet, uint8_t &flags, AddressKey &address_key, uint32_t &seq_num, uint32_t &ack_num) final;
 	virtual void handleFIN(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) final;
 	virtual void handleSYN(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) final;
