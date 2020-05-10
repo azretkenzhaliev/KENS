@@ -327,6 +327,14 @@ int TCPAssignment::writeData(Azocket &azocket, const void *buf, size_t count){
 		p ++;
 		written += 1;
 	}
+
+	// uint8_t *p = (uint8_t *) buf;
+	// for (int i = 0; i < count; i++) {
+	// 	std::cout << p[i] << std::endl;
+	// 	azocket.senderBuffer.buf.push_back(p[i]);
+	// 	written += 1;
+	// }
+
 	// std::cout << "written: " << written << std::endl;
 	dispatchWritePackets(azocket);
 	// std::cout << written << std::endl;
@@ -334,7 +342,24 @@ int TCPAssignment::writeData(Azocket &azocket, const void *buf, size_t count){
 }
 
 void TCPAssignment::syscall_read(UUID syscallUUID, int pid, int sockfd, void *buf, size_t count){
-	std::cout << "read was called" << std::endl; 
+	AzocketKey key(sockfd, pid);
+	Azocket &azocket = azocketKeyToAzocket[key];
+
+	if (azocket.receiverBuffer.buf.size() < count){
+		azocket.receiverBuffer.blocked = true;
+		azocket.receiverBuffer.uuid = syscallUUID;
+		azocket.receiverBuffer.count = count;
+		azocket.receiverBuffer.user_buf = buf;
+		return;
+	}
+
+	for (int i = 0; i < count; i++){
+		memcpy(buf + i, &azocket.receiverBuffer.buf[0], 1);
+		azocket.receiverBuffer.buf.pop_front();
+	}
+
+	azocket.receiverBuffer.window_size += count;
+	this->returnSystemCall(syscallUUID, count);
 }
 
 
@@ -418,6 +443,59 @@ void TCPAssignment::dispatchWritePackets(struct Azocket &azocket){
 	azocket.senderBuffer.can_receive -= bytes_to_send;
 }
 
+void TCPAssignment::ackWriteBytes(struct Azocket &azocket, int ack_num, int window_size){
+	int bytes_to_ack = ack_num - azocket.seq_num - azocket.senderBuffer.acked_bytes;
+	for (int i = 0; i < bytes_to_ack; i++){
+		azocket.senderBuffer.buf.pop_front();
+	}
+	azocket.senderBuffer.acked_bytes += bytes_to_ack;
+	azocket.senderBuffer.not_sent -= bytes_to_ack;
+	azocket.senderBuffer.can_receive = window_size;
+
+	dispatchWritePackets(azocket);
+}
+
+void TCPAssignment::receiveWriteBytes(AddressKey &address_key, uint32_t & seq_num, Packet *packet){
+	AzocketKey &key = addressKeyToAzocketKey[address_key];
+	Azocket &azocket = azocketKeyToAzocket[key];
+
+	int count = packet->getSize() - 54;
+
+	for (int i = 0; i < count; i++){
+		uint8_t p = 0;
+		packet->readData(14 + 20 + 20 + i, &p, 1);
+		azocket.receiverBuffer.buf.push_back(p);
+	}
+	int buffer_size = (int) azocket.receiverBuffer.buf.size();
+	azocket.receiverBuffer.window_size = 51200 - buffer_size;
+	azocket.ack_num = seq_num + count;
+
+	if (azocket.receiverBuffer.blocked){
+		if (azocket.receiverBuffer.buf.size() >= azocket.receiverBuffer.count){
+			
+			// uint8_t *p = (uint8_t *) azocket.receiverBuffer.user_buf;
+			// for (int i = 0; i < azocket.receiverBuffer.count; i++){
+			// 	memcpy(&p[i], &azocket.receiverBuffer.buf[0], 1);
+			// 	azocket.receiverBuffer.buf.pop_front();
+			// }
+
+			for (int i = 0; i < azocket.receiverBuffer.count; i++){
+				memcpy(azocket.receiverBuffer.user_buf + i, &azocket.receiverBuffer.buf[0], 1);
+				azocket.receiverBuffer.buf.pop_front();
+			}
+
+			azocket.receiverBuffer.window_size += azocket.receiverBuffer.count;
+			this->returnSystemCall(azocket.receiverBuffer.uuid, azocket.receiverBuffer.count);
+		}
+	}
+	
+	this->freePacket(packet);
+
+	Packet *new_packet = makePacket(azocket, TH_ACK);
+	this->sendPacket("IPv4", new_packet);
+}
+
+
 void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallParameter& param)
 {
 	switch(param.syscallNumber)
@@ -468,7 +546,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 	}
 }
 
-bool TCPAssignment::readPacket(Packet *packet, uint8_t &flags, AddressKey &address_key, uint32_t &seq_num, uint32_t &ack_num) {
+bool TCPAssignment::readPacket(Packet *packet, uint8_t &flags, AddressKey &address_key, uint32_t &seq_num, uint32_t &ack_num, uint16_t &window_size) {
 	packet->readData(14 + 20 + 13, &flags, 1);
 	packet->readData(14 + 12, &address_key.dest.ip, 4);
 	packet->readData(14 + 16, &address_key.source.ip, 4);
@@ -476,9 +554,11 @@ bool TCPAssignment::readPacket(Packet *packet, uint8_t &flags, AddressKey &addre
 	packet->readData(14 + 20 + 2, &address_key.source.port, 2);
 	packet->readData(14 + 20 + 4, &seq_num, 4);
 	packet->readData(14 + 20 + 8, &ack_num, 4);
+	packet->readData(14 + 20 + 14, &window_size, 2);
 
 	seq_num = ntohl(seq_num);
 	ack_num = ntohl(ack_num);
+	window_size = ntohs(window_size);
 
 	uint16_t given_checksum = 0;
 	packet->readData(14 + 20 + 16, &given_checksum, 2);
@@ -486,7 +566,7 @@ bool TCPAssignment::readPacket(Packet *packet, uint8_t &flags, AddressKey &addre
 	uint16_t null_checksum = 0;
 	packet->writeData(14 + 20 + 16, &null_checksum, 2);
 
-	size_t tcp_len = 20;
+	size_t tcp_len = packet->getSize() - 34;
 	uint8_t *tcp_seg = (uint8_t *) malloc(tcp_len);
 	packet->readData(14 + 20, tcp_seg, tcp_len);
 
@@ -563,10 +643,15 @@ void TCPAssignment::handleSYN(const AddressKey &address_key, const uint32_t &seq
 	new_azocket.state = TCP_SYN_RECV;
 }
 
-void TCPAssignment::handleACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) {
+void TCPAssignment::handleACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num, uint16_t &window_size) {
 	AzocketKey &key = addressKeyToAzocketKey[address_key];
 	Azocket &azocket = azocketKeyToAzocket[key];
 
+	if (azocket.state == TCP_ESTABLISHED) {
+		ackWriteBytes(azocket, ack_num, window_size);
+		return;
+	} 
+	
 #if 0
 	std::cout << "ACK: " << key.sockfd << " " << ack_num << " " << azocketKeyToAzocket[key].seq_num << "\n";
 #endif
@@ -704,12 +789,22 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 	AddressKey address_key;
 	uint32_t seq_num = 0;
 	uint32_t ack_num = 0;
+	uint16_t window_size = 0;
 
-	// std::cout << "packet size: " << packet->getSize() << std::endl;
+	// if (packet->getSize() > 54){
+	// 	std::cout << "packet size: " << packet->getSize() << std::endl;
+	// }
+	Packet *packet_clone = this->clonePacket(packet);
 
-	if (!readPacket(packet, flags, address_key, seq_num, ack_num)) {
+	if (!readPacket(packet, flags, address_key, seq_num, ack_num, window_size)) {
 		return;
 	}
+
+	if (packet->getSize() > 54){
+		receiveWriteBytes(address_key, seq_num, packet_clone);
+		return;
+	}
+	this->freePacket(packet_clone);
 
 #if 0
 	std::cout << "Packet came to me (" << address_key.source.ip << ", " << address_key.source.port << ") from (" << address_key.dest.ip << ", " << address_key.dest.port << ")\n";
@@ -735,7 +830,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 			break;
 		}
 		case TH_ACK: {
-			handleACK(address_key, seq_num, ack_num);
+			handleACK(address_key, seq_num, ack_num, window_size);
 		}
 	}
 }

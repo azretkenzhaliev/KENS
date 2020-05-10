@@ -194,9 +194,13 @@ protected:
 
 	struct ReceiverBuffer {
 		int window_size;
-		uint8_t *rcv_buf;
+		std::deque <uint8_t> buf; 
+		UUID uuid;
+		int count;
+		bool blocked;
+		void *user_buf;
 
-		ReceiverBuffer() : window_size(51200) {}
+		ReceiverBuffer() : window_size(51200), blocked(false) {}
 	};
 
 	struct AzocketKey {
@@ -308,10 +312,12 @@ protected:
 	virtual Packet* makePacket(struct Azocket &azocket, uint8_t type, int bytes=0) final;
 	virtual void dispatchPacket(struct Azocket &azocket, uint8_t type) final;	
 	virtual void dispatchWritePackets(struct Azocket &azocket) final;
-	virtual bool readPacket(Packet *packet, uint8_t &flags, AddressKey &address_key, uint32_t &seq_num, uint32_t &ack_num) final;
+	virtual void ackWriteBytes(struct Azocket &azocket, int ack_num, int window_size) final;
+	virtual void receiveWriteBytes(AddressKey &address_key, uint32_t & seq_num, Packet *packet) final;
+	virtual bool readPacket(Packet *packet, uint8_t &flags, AddressKey &address_key, uint32_t &seq_num, uint32_t &ack_num, uint16_t &window_size) final;
 	virtual void handleFIN(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) final;
 	virtual void handleSYN(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) final;
-	virtual void handleACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) final;
+	virtual void handleACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num, uint16_t &window_size) final;
 	virtual void handleFINACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) final;
 	virtual void handleSYNACK(const AddressKey &address_key, const uint32_t &seq_num, const uint32_t &ack_num) final;
 };
