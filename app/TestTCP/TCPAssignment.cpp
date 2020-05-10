@@ -318,9 +318,7 @@ void TCPAssignment::syscall_write(UUID syscallUUID, int pid, int sockfd, const v
 }
 
 int TCPAssignment::writeData(Azocket &azocket, const void *buf, size_t count){
-	// return how many bytes actually has been written
 	int written = 0;
-	// std::cout << "count: " << count << std::endl; 
 	uint8_t *p = (uint8_t *) buf;
 	for (int i = 0; i < count; i++){
 		azocket.senderBuffer.buf.push_back(*p);
@@ -328,16 +326,7 @@ int TCPAssignment::writeData(Azocket &azocket, const void *buf, size_t count){
 		written += 1;
 	}
 
-	// uint8_t *p = (uint8_t *) buf;
-	// for (int i = 0; i < count; i++) {
-	// 	std::cout << p[i] << std::endl;
-	// 	azocket.senderBuffer.buf.push_back(p[i]);
-	// 	written += 1;
-	// }
-
-	// std::cout << "written: " << written << std::endl;
 	dispatchWritePackets(azocket);
-	// std::cout << written << std::endl;
 	return written;
 }
 
@@ -345,7 +334,7 @@ void TCPAssignment::syscall_read(UUID syscallUUID, int pid, int sockfd, void *bu
 	AzocketKey key(sockfd, pid);
 	Azocket &azocket = azocketKeyToAzocket[key];
 
-	if (azocket.receiverBuffer.buf.size() < count){
+	if (azocket.receiverBuffer.buf.size() == 0){
 		azocket.receiverBuffer.blocked = true;
 		azocket.receiverBuffer.uuid = syscallUUID;
 		azocket.receiverBuffer.count = count;
@@ -353,13 +342,14 @@ void TCPAssignment::syscall_read(UUID syscallUUID, int pid, int sockfd, void *bu
 		return;
 	}
 
-	for (int i = 0; i < count; i++){
+	int bytes_to_read = std::min((int) azocket.receiverBuffer.buf.size(), (int) count);
+	for (int i = 0; i < bytes_to_read; i++){
 		memcpy(buf + i, &azocket.receiverBuffer.buf[0], 1);
 		azocket.receiverBuffer.buf.pop_front();
 	}
 
-	azocket.receiverBuffer.window_size += count;
-	this->returnSystemCall(syscallUUID, count);
+	azocket.receiverBuffer.window_size += bytes_to_read;
+	this->returnSystemCall(syscallUUID, bytes_to_read);
 }
 
 
@@ -433,9 +423,7 @@ void TCPAssignment::dispatchWritePackets(struct Azocket &azocket){
 	while (bytes_to_send != 0){
 		int bytes = std::min(512, bytes_to_send);
 		Packet *packet = makePacket(azocket, TH_ACK, bytes);
-		// std::cout << "sending packet" << std::endl;
 		this->sendPacket("IPv4", packet);
-		// std::cout << "sent packet" << std::endl;
 		bytes_to_send -= bytes;
 		azocket.senderBuffer.not_sent += bytes;
 	}
@@ -471,24 +459,15 @@ void TCPAssignment::receiveWriteBytes(AddressKey &address_key, uint32_t & seq_nu
 	azocket.ack_num = seq_num + count;
 
 	if (azocket.receiverBuffer.blocked){
-		if (azocket.receiverBuffer.buf.size() >= azocket.receiverBuffer.count){
-			
-			// uint8_t *p = (uint8_t *) azocket.receiverBuffer.user_buf;
-			// for (int i = 0; i < azocket.receiverBuffer.count; i++){
-			// 	memcpy(&p[i], &azocket.receiverBuffer.buf[0], 1);
-			// 	azocket.receiverBuffer.buf.pop_front();
-			// }
-
-			for (int i = 0; i < azocket.receiverBuffer.count; i++){
+			int bytes_to_read = std::min((int) azocket.receiverBuffer.buf.size(), azocket.receiverBuffer.count);
+			for (int i = 0; i < bytes_to_read; i++){
 				memcpy(azocket.receiverBuffer.user_buf + i, &azocket.receiverBuffer.buf[0], 1);
 				azocket.receiverBuffer.buf.pop_front();
 			}
 
-			azocket.receiverBuffer.window_size += azocket.receiverBuffer.count;
-			this->returnSystemCall(azocket.receiverBuffer.uuid, azocket.receiverBuffer.count);
-		}
+			azocket.receiverBuffer.window_size += bytes_to_read;
+			this->returnSystemCall(azocket.receiverBuffer.uuid, bytes_to_read);
 	}
-	
 	this->freePacket(packet);
 
 	Packet *new_packet = makePacket(azocket, TH_ACK);
@@ -752,12 +731,12 @@ void TCPAssignment::handleFINACK(const AddressKey &address_key, const uint32_t &
 #if 0
 		std::cout << "state: " << "TCP_ESTABLISHED" << std::endl;
 #endif
-
 		azocket.ack_num = seq_num + 1;
-
 		dispatchPacket(azocket, TH_ACK);
-
 		azocket.state = TCP_CLOSE_WAIT;
+		if (azocket.receiverBuffer.blocked){
+			this->returnSystemCall(azocket.receiverBuffer.uuid, -1);
+		}
 	}
 }
 
@@ -791,9 +770,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet *packet) {
 	uint32_t ack_num = 0;
 	uint16_t window_size = 0;
 
-	// if (packet->getSize() > 54){
-	// 	std::cout << "packet size: " << packet->getSize() << std::endl;
-	// }
 	Packet *packet_clone = this->clonePacket(packet);
 
 	if (!readPacket(packet, flags, address_key, seq_num, ack_num, window_size)) {
